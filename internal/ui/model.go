@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -15,6 +16,7 @@ type State int
 const (
 	StateInput State = iota
 	StateRefining
+	StateFilePrompt
 	StateLoading
 	StateSuggestion
 	StateExplained
@@ -22,25 +24,30 @@ const (
 )
 
 type Model struct {
-	State        State
-	Question     string
-	Input        textinput.Model
-	ContextInfo  string // Information about attached files/stdin
-	Suggestion   string
-	Explanation  string
+	State          State
+	PreviousState  State // To return after file prompt
+	Question       string
+	Input          textinput.Model
+	ContextInfo    string // Display string (e.g. "Attached: foo.txt")
+	ContextContent string // Actual content
+	Suggestion     string
+	Explanation    string
 	Err          error
 	
 	// Query
-	QueryFunc   func(string) (string, error)
-	ExplainFunc func(string) (string, error)
-	RefineFunc  func(string, string) (string, error)
+	QueryFunc   func(string, string) (string, error)
+	ExplainFunc func(string, string) (string, error)
+	RefineFunc  func(string, string, string) (string, error)
 
 	// Menu
 	Options        []string
 	SelectedOption int
+
+	// Focus
+	FocusIndex int // 0: Input, 1: AttachButton
 }
 
-func NewModel(question string, contextInfo string, queryFunc func(string) (string, error), explainFunc func(string) (string, error), refineFunc func(string, string) (string, error)) Model {
+func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
 	initialState := StateLoading
 	ti := textinput.New()
 	
@@ -55,6 +62,7 @@ func NewModel(question string, contextInfo string, queryFunc func(string) (strin
 		Question:       question,
 		Input:          ti,
 		ContextInfo:    contextInfo,
+		ContextContent: contextContent,
 		Options:        []string{"Copy", "Explain", "Edit", "Cancel"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
@@ -68,7 +76,7 @@ func (m Model) Init() tea.Cmd {
 		return textinput.Blink
 	}
 	return func() tea.Msg {
-		res, err := m.QueryFunc(m.Question)
+		res, err := m.QueryFunc(m.Question, m.ContextContent)
 		if err != nil {
 			return ErrorMsg(err)
 		}
@@ -93,12 +101,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.State {
 		case StateInput:
 			switch msg.String() {
+			case "tab", "shift+tab":
+				m.FocusIndex = 1 - m.FocusIndex // Toggle 0/1
+				if m.FocusIndex == 0 {
+					m.Input.Focus()
+				} else {
+					m.Input.Blur()
+				}
+				return m, nil
+
 			case "enter":
+				if m.FocusIndex == 1 {
+					// Attach File Button Clicked
+					m.PreviousState = m.State
+					m.State = StateFilePrompt
+					m.Input.SetValue("")
+					m.Input.Placeholder = "/path/to/file"
+					m.Input.Focus()
+					return m, textinput.Blink
+				}
+
 				m.Question = m.Input.Value()
 				if m.Question != "" {
 					m.State = StateLoading
 					return m, func() tea.Msg {
-						res, err := m.QueryFunc(m.Question)
+						res, err := m.QueryFunc(m.Question, m.ContextContent)
 						if err != nil {
 							return ErrorMsg(err)
 						}
@@ -114,12 +141,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateRefining:
 			switch msg.String() {
+			case "tab", "shift+tab":
+				m.FocusIndex = 1 - m.FocusIndex // Toggle 0/1
+				if m.FocusIndex == 0 {
+					m.Input.Focus()
+				} else {
+					m.Input.Blur()
+				}
+				return m, nil
+
 			case "enter":
+				if m.FocusIndex == 1 {
+					// Attach File Button Clicked
+					m.PreviousState = m.State
+					m.State = StateFilePrompt
+					m.Input.SetValue("")
+					m.Input.Placeholder = "/path/to/file"
+					m.Input.Focus()
+					return m, textinput.Blink
+				}
+
+				// Submit Input
 				refinement := m.Input.Value()
 				if refinement != "" {
 					m.State = StateLoading
 					return m, func() tea.Msg {
-						res, err := m.RefineFunc(m.Suggestion, refinement)
+						res, err := m.RefineFunc(m.Suggestion, refinement, m.ContextContent)
 						if err != nil {
 							return ErrorMsg(err)
 						}
@@ -128,6 +175,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "esc":
 				m.State = StateSuggestion
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.Input, cmd = m.Input.Update(msg)
+			return m, cmd
+
+		case StateFilePrompt:
+			switch msg.String() {
+			case "enter":
+				path := m.Input.Value()
+				if path != "" {
+					// Read file (sync for simplicity, or could be Cmd)
+					// Verify file exists
+					b, err := os.ReadFile(path)
+					if err != nil {
+						m.Err = fmt.Errorf("read error: %v", err)
+						m.State = StateError
+						return m, nil
+					}
+					
+					// Append context
+					m.ContextContent += fmt.Sprintf("\n--- File: %s ---\n%s\n", path, string(b))
+					if m.ContextInfo == "" {
+						m.ContextInfo = path
+					} else {
+						m.ContextInfo += ", " + path
+					}
+					
+					// Return to previous state
+					m.State = m.PreviousState
+					m.Input.SetValue("") // Clear input for question/refinement
+					m.FocusIndex = 0     // Reset focus to input
+					m.Input.Focus()
+					
+					// Restore placeholders logic
+					if m.State == StateInput {
+						m.Input.Placeholder = "e.g. how do I..."
+					} else {
+						m.Input.Placeholder = "e.g. make it recursive"
+					}
+					return m, nil
+				}
+			case "esc":
+				m.State = m.PreviousState
 				return m, nil
 			case "ctrl+c":
 				return m, tea.Quit
@@ -177,7 +270,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 	case "Explain":
 		m.State = StateLoading // Show loading while explaining
 		return m, func() tea.Msg {
-			exp, err := m.ExplainFunc(m.Suggestion)
+			exp, err := m.ExplainFunc(m.Suggestion, m.ContextContent)
 			if err != nil {
 				return ErrorMsg(err)
 			}
@@ -205,16 +298,44 @@ func (m Model) View() string {
 			s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render(fmt.Sprintf("\n(Context: %s)", m.ContextInfo)))
 		}
 		s.WriteString("\n\n")
+		
+		// Input View
 		s.WriteString(m.Input.View())
-		s.WriteString("\n\n(Press Enter to submit, Esc to quit)")
+		s.WriteString("\n\n")
+
+		// Attach Button Logic
+		btnStyle := ItemStyle
+		if m.FocusIndex == 1 {
+			btnStyle = SelectedItemStyle
+		}
+		s.WriteString(btnStyle.Render("[ Attach File ]"))
+		
+		s.WriteString("\n\n(Tab to select, Enter to confirm, Esc to quit)")
 
 	case StateRefining:
 		s.WriteString(TitleStyle.Render("How should the command be changed?"))
 		s.WriteString("\n\n")
 		s.WriteString(lipgloss.NewStyle().Foreground(secondaryColor).Render(m.Suggestion))
 		s.WriteString("\n\n")
+		
+		// Input View
 		s.WriteString(m.Input.View())
-		s.WriteString("\n\n(Press Enter to submit, Esc to cancel)")
+		s.WriteString("\n\n")
+
+		// Attach Button Logic
+		btnStyle := ItemStyle
+		if m.FocusIndex == 1 {
+			btnStyle = SelectedItemStyle
+		}
+		s.WriteString(btnStyle.Render("[ Attach File ]"))
+
+		s.WriteString("\n\n(Tab to select, Enter to confirm, Esc to cancel)")
+
+	case StateFilePrompt:
+		s.WriteString(TitleStyle.Render("File to attach:"))
+		s.WriteString("\n\n")
+		s.WriteString(m.Input.View())
+		s.WriteString("\n\n(Press Enter to attach, Esc to cancel)")
 
 	case StateLoading:
 		if m.Explanation == "" && m.Suggestion != "" {

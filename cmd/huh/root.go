@@ -62,10 +62,22 @@ var rootCmd = &cobra.Command{
 		provider := llm.NewOllamaProvider()
 
 		// 4. Define Query Function
-		queryFunc := func(q string) (string, error) {
+		queryFunc := func(q string, dynamicContext string) (string, error) {
 			finalQuestion := q
+			
+			// Merge Contexts
+			var fullContext strings.Builder
 			if attachedContent != "" {
-				finalQuestion = fmt.Sprintf("%s\n\nAttached Context:\n%s", q, attachedContent)
+				fullContext.WriteString(attachedContent)
+				fullContext.WriteString("\n")
+			}
+			if dynamicContext != "" {
+				fullContext.WriteString(dynamicContext)
+			}
+			
+			mergedContext := fullContext.String()
+			if mergedContext != "" {
+				finalQuestion = fmt.Sprintf("%s\n\nAttached Context:\n%s", q, mergedContext)
 			}
 
 			systemPrompt := fmt.Sprintf(
@@ -77,25 +89,46 @@ var rootCmd = &cobra.Command{
 		}
 
 		// 5. Define Explain Function
-		explainFunc := func(command string) (string, error) {
-			// Attach content to explain as well? Usually explain is about the command.
-			// But context might explain "why" the command works on "this file".
-			// Let's attach it.
+		explainFunc := func(command string, dynamicContext string) (string, error) {
 			prompt := fmt.Sprintf("Explain the following command briefly: '%s'", command)
+			
+			// Merge Contexts
+			var fullContext strings.Builder
 			if attachedContent != "" {
-				prompt += fmt.Sprintf("\n\nContext:\n%s", attachedContent)
+				fullContext.WriteString(attachedContent)
+				fullContext.WriteString("\n")
+			}
+			if dynamicContext != "" {
+				fullContext.WriteString(dynamicContext)
+			}
+			
+			mergedContext := fullContext.String()
+			if mergedContext != "" {
+				prompt += fmt.Sprintf("\n\nContext:\n%s", mergedContext)
 			}
 			return provider.Query(cmd.Context(), "You are a helpful assistant explaining Linux commands.", prompt)
 		}
 
 		// 6. Define Refine Function
-		refineFunc := func(originalCommand, refinement string) (string, error) {
+		refineFunc := func(originalCommand, refinement, dynamicContext string) (string, error) {
 			refinePrompt := fmt.Sprintf(
 				"Original Request: '%s'. Original Command: '%s'. Refinement Request: '%s'. Return ONLY the updated command, no markdown, no explanation.", 
 				question, originalCommand, refinement,
 			)
+			
+			// Merge Contexts
+			var fullContext strings.Builder
 			if attachedContent != "" {
-				refinePrompt += fmt.Sprintf("\n\nContext:\n%s", attachedContent)
+				fullContext.WriteString(attachedContent)
+				fullContext.WriteString("\n")
+			}
+			if dynamicContext != "" {
+				fullContext.WriteString(dynamicContext)
+			}
+			
+			mergedContext := fullContext.String()
+			if mergedContext != "" {
+				refinePrompt += fmt.Sprintf("\n\nContext:\n%s", mergedContext)
 			}
 			systemPrompt := fmt.Sprintf("You are a command line helper for %s. Update the command based on user request.", sysCtx.Distro)
 			return provider.Query(cmd.Context(), systemPrompt, refinePrompt)
@@ -112,7 +145,7 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		p := tea.NewProgram(ui.NewModel(question, contextInfo, queryFunc, explainFunc, refineFunc), opts...)
+		p := tea.NewProgram(ui.NewModel(question, contextInfo, attachedContent, queryFunc, explainFunc, refineFunc), opts...)
 		if _, err := p.Run(); err != nil {
 			fmt.Printf("Error running TUI: %v\n", err)
 			os.Exit(1)
