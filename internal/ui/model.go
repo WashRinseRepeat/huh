@@ -26,20 +26,22 @@ type Model struct {
 	Err          error
 	
 	// Query
-	QueryFunc func() (string, error)
+	QueryFunc   func() (string, error)
+	ExplainFunc func(string) (string, error)
 
 	// Menu
 	Options        []string
 	SelectedOption int
 }
 
-func NewModel(question string, queryFunc func() (string, error)) Model {
+func NewModel(question string, queryFunc func() (string, error), explainFunc func(string) (string, error)) Model {
 	return Model{
 		State:          StateLoading,
 		Question:       question,
 		Options:        []string{"Copy", "Explain", "Edit", "Cancel"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
+		ExplainFunc:    explainFunc,
 	}
 }
 
@@ -59,6 +61,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Suggestion = string(msg)
 		m.Explanation = "" // Clear previous if any
 		m.State = StateSuggestion
+	case ExplanationMsg:
+		m.Explanation = string(msg)
+		m.State = StateExplained
 	case ErrorMsg:
 		m.Err = msg
 		m.State = StateError
@@ -97,14 +102,25 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 	selected := m.Options[m.SelectedOption]
 	switch selected {
 	case "Copy":
-		clipboard.WriteAll(m.Suggestion)
+		if err := clipboard.WriteAll(m.Suggestion); err != nil {
+			m.Err = fmt.Errorf("failed to copy: %v (install wl-clipboard or xclip)", err)
+			m.State = StateError
+			return m, nil
+		}
 		return m, tea.Quit
 	case "Explain":
-		m.State = StateExplained
-		// In real app, trigger explain query here if not already cached
+		m.State = StateLoading // Show loading while explaining
+		return m, func() tea.Msg {
+			exp, err := m.ExplainFunc(m.Suggestion)
+			if err != nil {
+				return ErrorMsg(err)
+			}
+			return ExplanationMsg(exp)
+		}
 	case "Edit":
-		// TODO: Implement Edit mode
-		return m, tea.Quit
+		m.Err = fmt.Errorf("edit mode not implemented yet")
+		m.State = StateError
+		return m, nil
 	case "Cancel":
 		return m, tea.Quit
 	}
@@ -116,7 +132,11 @@ func (m Model) View() string {
 
 	switch m.State {
 	case StateLoading:
-		s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
+		if m.Explanation == "" && m.Suggestion != "" {
+			s.WriteString("Explaining...")
+		} else {
+			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
+		}
 	
 	case StateSuggestion:
 		s.WriteString(TitleStyle.Render("Suggestion:"))

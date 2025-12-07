@@ -39,8 +39,14 @@ var rootCmd = &cobra.Command{
 			return provider.Query(cmd.Context(), systemPrompt, question)
 		}
 
-		// 4. Start TUI
-		p := tea.NewProgram(ui.NewModel(question, queryFunc))
+		// 4. Define Explain Function
+		explainFunc := func(command string) (string, error) {
+			explainPrompt := fmt.Sprintf("Explain the following command briefly: '%s'", command)
+			return provider.Query(cmd.Context(), "You are a helpful assistant explaining Linux commands.", explainPrompt)
+		}
+
+		// 5. Start TUI
+		p := tea.NewProgram(ui.NewModel(question, queryFunc, explainFunc))
 		if _, err := p.Run(); err != nil {
 			fmt.Printf("Error running TUI: %v\n", err)
 			os.Exit(1)
