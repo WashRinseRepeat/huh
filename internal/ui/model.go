@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -12,7 +13,8 @@ import (
 type State int
 
 const (
-	StateLoading State = iota
+	StateInput State = iota
+	StateLoading
 	StateSuggestion
 	StateExplained
 	StateError
@@ -21,12 +23,13 @@ const (
 type Model struct {
 	State        State
 	Question     string
+	Input        textinput.Model
 	Suggestion   string
 	Explanation  string
 	Err          error
 	
 	// Query
-	QueryFunc   func() (string, error)
+	QueryFunc   func(string) (string, error)
 	ExplainFunc func(string) (string, error)
 
 	// Menu
@@ -34,10 +37,20 @@ type Model struct {
 	SelectedOption int
 }
 
-func NewModel(question string, queryFunc func() (string, error), explainFunc func(string) (string, error)) Model {
+func NewModel(question string, queryFunc func(string) (string, error), explainFunc func(string) (string, error)) Model {
+	initialState := StateLoading
+	ti := textinput.New()
+	
+	if question == "" {
+		initialState = StateInput
+		ti.Placeholder = "e.g. how do I check disk space?"
+		ti.Focus()
+	}
+
 	return Model{
-		State:          StateLoading,
+		State:          initialState,
 		Question:       question,
+		Input:          ti,
 		Options:        []string{"Copy", "Explain", "Edit", "Cancel"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
@@ -46,8 +59,11 @@ func NewModel(question string, queryFunc func() (string, error), explainFunc fun
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.State == StateInput {
+		return textinput.Blink
+	}
 	return func() tea.Msg {
-		res, err := m.QueryFunc()
+		res, err := m.QueryFunc(m.Question)
 		if err != nil {
 			return ErrorMsg(err)
 		}
@@ -70,6 +86,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch m.State {
+		case StateInput:
+			switch msg.String() {
+			case "enter":
+				m.Question = m.Input.Value()
+				if m.Question != "" {
+					m.State = StateLoading
+					return m, func() tea.Msg {
+						res, err := m.QueryFunc(m.Question)
+						if err != nil {
+							return ErrorMsg(err)
+						}
+						return SuggestionMsg(res)
+					}
+				}
+			case "ctrl+c", "esc":
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.Input, cmd = m.Input.Update(msg)
+			return m, cmd
+
 		case StateSuggestion:
 			switch msg.String() {
 			case "q", "ctrl+c":
@@ -131,6 +168,12 @@ func (m Model) View() string {
 	var s strings.Builder
 
 	switch m.State {
+	case StateInput:
+		s.WriteString(TitleStyle.Render("What would you like to do?"))
+		s.WriteString("\n\n")
+		s.WriteString(m.Input.View())
+		s.WriteString("\n\n(Press Enter to submit, Esc to quit)")
+
 	case StateLoading:
 		if m.Explanation == "" && m.Suggestion != "" {
 			s.WriteString("Explaining...")

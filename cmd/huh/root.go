@@ -18,7 +18,7 @@ var rootCmd = &cobra.Command{
 	Use:   "huh [question]",
 	Short: "huh is your terminal AI assistant",
 	Long:  `huh translates natural language questions into terminal commands.`,
-	Args:  cobra.MinimumNArgs(1),
+	Args:  cobra.MaximumNArgs(100), // Allow any number, we join them. If 0, we enter interactive.
 	Run: func(cmd *cobra.Command, args []string) {
 		question := strings.Join(args, " ")
 		
@@ -29,14 +29,14 @@ var rootCmd = &cobra.Command{
 		provider := llm.NewOllamaProvider() // Config-based loading in future
 
 		// 3. Define Query Function
-		queryFunc := func() (string, error) {
+		queryFunc := func(q string) (string, error) {
 			systemPrompt := fmt.Sprintf(
 				"You are a command line helper for %s running %s shell. Your user asks: '%s'. Return ONLY the command to run, no markdown, no explanation.", 
-				sysCtx.Distro, sysCtx.Shell, question,
+				sysCtx.Distro, sysCtx.Shell, q,
 			)
 			// Hardware context could be added to prompt here
 			
-			return provider.Query(cmd.Context(), systemPrompt, question)
+			return provider.Query(cmd.Context(), systemPrompt, q)
 		}
 
 		// 4. Define Explain Function
