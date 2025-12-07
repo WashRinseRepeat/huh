@@ -25,6 +25,7 @@ type Model struct {
 	State        State
 	Question     string
 	Input        textinput.Model
+	ContextInfo  string // Information about attached files/stdin
 	Suggestion   string
 	Explanation  string
 	Err          error
@@ -39,7 +40,7 @@ type Model struct {
 	SelectedOption int
 }
 
-func NewModel(question string, queryFunc func(string) (string, error), explainFunc func(string) (string, error), refineFunc func(string, string) (string, error)) Model {
+func NewModel(question string, contextInfo string, queryFunc func(string) (string, error), explainFunc func(string) (string, error), refineFunc func(string, string) (string, error)) Model {
 	initialState := StateLoading
 	ti := textinput.New()
 	
@@ -53,6 +54,7 @@ func NewModel(question string, queryFunc func(string) (string, error), explainFu
 		State:          initialState,
 		Question:       question,
 		Input:          ti,
+		ContextInfo:    contextInfo,
 		Options:        []string{"Copy", "Explain", "Edit", "Cancel"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
@@ -199,6 +201,9 @@ func (m Model) View() string {
 	switch m.State {
 	case StateInput:
 		s.WriteString(TitleStyle.Render("What would you like to do?"))
+		if m.ContextInfo != "" {
+			s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render(fmt.Sprintf("\n(Context: %s)", m.ContextInfo)))
+		}
 		s.WriteString("\n\n")
 		s.WriteString(m.Input.View())
 		s.WriteString("\n\n(Press Enter to submit, Esc to quit)")
@@ -216,6 +221,9 @@ func (m Model) View() string {
 			s.WriteString("Explaining...")
 		} else {
 			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
+			if m.ContextInfo != "" {
+				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
+			}
 		}
 	
 	case StateSuggestion:
