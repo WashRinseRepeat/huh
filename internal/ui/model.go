@@ -14,6 +14,7 @@ type State int
 
 const (
 	StateInput State = iota
+	StateRefining
 	StateLoading
 	StateSuggestion
 	StateExplained
@@ -31,13 +32,14 @@ type Model struct {
 	// Query
 	QueryFunc   func(string) (string, error)
 	ExplainFunc func(string) (string, error)
+	RefineFunc  func(string, string) (string, error)
 
 	// Menu
 	Options        []string
 	SelectedOption int
 }
 
-func NewModel(question string, queryFunc func(string) (string, error), explainFunc func(string) (string, error)) Model {
+func NewModel(question string, queryFunc func(string) (string, error), explainFunc func(string) (string, error), refineFunc func(string, string) (string, error)) Model {
 	initialState := StateLoading
 	ti := textinput.New()
 	
@@ -55,6 +57,7 @@ func NewModel(question string, queryFunc func(string) (string, error), explainFu
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
 		ExplainFunc:    explainFunc,
+		RefineFunc:     refineFunc,
 	}
 }
 
@@ -101,6 +104,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "ctrl+c", "esc":
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.Input, cmd = m.Input.Update(msg)
+			return m, cmd
+
+		case StateRefining:
+			switch msg.String() {
+			case "enter":
+				refinement := m.Input.Value()
+				if refinement != "" {
+					m.State = StateLoading
+					return m, func() tea.Msg {
+						res, err := m.RefineFunc(m.Suggestion, refinement)
+						if err != nil {
+							return ErrorMsg(err)
+						}
+						return SuggestionMsg(res)
+					}
+				}
+			case "esc":
+				m.State = StateSuggestion
+				return m, nil
+			case "ctrl+c":
 				return m, tea.Quit
 			}
 			var cmd tea.Cmd
@@ -155,9 +182,11 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 			return ExplanationMsg(exp)
 		}
 	case "Edit":
-		m.Err = fmt.Errorf("edit mode not implemented yet")
-		m.State = StateError
-		return m, nil
+		m.State = StateRefining
+		m.Input.SetValue("")
+		m.Input.Placeholder = "e.g. add a recursive flag"
+		m.Input.Focus()
+		return m, textinput.Blink
 	case "Cancel":
 		return m, tea.Quit
 	}
@@ -173,6 +202,14 @@ func (m Model) View() string {
 		s.WriteString("\n\n")
 		s.WriteString(m.Input.View())
 		s.WriteString("\n\n(Press Enter to submit, Esc to quit)")
+
+	case StateRefining:
+		s.WriteString(TitleStyle.Render("How should the command be changed?"))
+		s.WriteString("\n\n")
+		s.WriteString(lipgloss.NewStyle().Foreground(secondaryColor).Render(m.Suggestion))
+		s.WriteString("\n\n")
+		s.WriteString(m.Input.View())
+		s.WriteString("\n\n(Press Enter to submit, Esc to cancel)")
 
 	case StateLoading:
 		if m.Explanation == "" && m.Suggestion != "" {

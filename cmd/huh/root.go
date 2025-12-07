@@ -45,8 +45,19 @@ var rootCmd = &cobra.Command{
 			return provider.Query(cmd.Context(), "You are a helpful assistant explaining Linux commands.", explainPrompt)
 		}
 
-		// 5. Start TUI
-		p := tea.NewProgram(ui.NewModel(question, queryFunc, explainFunc))
+		// 5. Define Refine Function
+		refineFunc := func(originalCommand, refinement string) (string, error) {
+			refinePrompt := fmt.Sprintf(
+				"Original Request: '%s'. Original Command: '%s'. Refinement Request: '%s'. Return ONLY the updated command, no markdown, no explanation.", 
+				question, originalCommand, refinement,
+			)
+			// Context: command helper
+			systemPrompt := fmt.Sprintf("You are a command line helper for %s. Update the command based on user request.", sysCtx.Distro)
+			return provider.Query(cmd.Context(), systemPrompt, refinePrompt)
+		}
+
+		// 6. Start TUI
+		p := tea.NewProgram(ui.NewModel(question, queryFunc, explainFunc, refineFunc))
 		if _, err := p.Run(); err != nil {
 			fmt.Printf("Error running TUI: %v\n", err)
 			os.Exit(1)
