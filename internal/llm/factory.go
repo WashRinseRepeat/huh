@@ -39,6 +39,17 @@ func NewProvider(name string) (LLM, error) {
 		}
 		return NewOpenAIProvider(apiKey, model), nil
 
+	case "openrouter":
+		apiKey := providerConfig.Params["api_key"]
+		model := providerConfig.Params["model"]
+		if apiKey == "" {
+			return nil, fmt.Errorf("openrouter provider '%s' missing api_key", name)
+		}
+		if model == "" {
+			model = "openai/gpt-3.5-turbo" // Default model for openrouter, just an example
+		}
+		return NewOpenRouterProvider(apiKey, model), nil
+
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerConfig.Type)
 	}

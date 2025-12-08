@@ -24,3 +24,9 @@ providers:
     params:
       api_key: YOUR_OPENAI_API_KEY
       model: gpt-4-turbo
+
+  openrouter:
+    type: openrouter
+    params:
+      api_key: YOUR_OPENROUTER_API_KEY
+      model: anthropic/claude-3-opus
