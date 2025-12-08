@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 type State int
@@ -56,8 +57,9 @@ type Model struct {
 	MatchIndex int
 
 	// Viewport
-	viewport viewport.Model
-	ready    bool
+	viewport  viewport.Model
+	maxHeight int
+	ready     bool
 }
 
 func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
@@ -112,11 +114,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ready {
 			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight)
 			m.viewport.YPosition = headerHeight
+			m.maxHeight = msg.Height - verticalMarginHeight
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
-			m.viewport.Height = msg.Height - verticalMarginHeight
+			m.maxHeight = msg.Height - verticalMarginHeight
 		}
+		
+		// Re-render content with new width
+		m.updateViewportContent()
 
 	case SuggestionMsg:
 		m.Suggestion = string(msg)
@@ -443,6 +449,10 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 func (m *Model) updateViewportContent() {
 	var content strings.Builder
 	
+	// Create a wrapper style for wrapping text
+	// Ensure we reserve some padding if needed, but viewport width is usually sufficient
+	// wrapper := lipgloss.NewStyle().Width(m.viewport.Width)
+
 	if m.State == StateSuggestion {
 		if len(m.RunnableCommands) > 0 && strings.Contains(m.Suggestion, "```") {
 			// Split by code blocks
@@ -456,31 +466,45 @@ func (m *Model) updateViewportContent() {
 						if cmdIndex == m.ActiveCommandIndex {
 							style = CommandStyle
 						}
+						// Commands are usually short, but let's wrap just in case or truncation? 
+						// Code blocks usually scroll horizontally or wrap poorly. 
+						// Let's assume commands fit or soft wrap naturally.
 						content.WriteString(style.Render(cmdVal))
 						cmdIndex++
 					} else {
-						content.WriteString(InactiveCommandStyle.Render(part))
+						content.WriteString(wordwrap.String(InactiveCommandStyle.Render(part), m.viewport.Width))
 					}
 				} else { // Outside code block
-					content.WriteString(part)
+					content.WriteString(wordwrap.String(part, m.viewport.Width))
 				}
 			}
 		} else {
-			content.WriteString(m.Suggestion)
+			content.WriteString(wordwrap.String(m.Suggestion, m.viewport.Width))
 		}
 		
 		content.WriteString("\n")
 		if len(m.RunnableCommands) > 1 {
-			content.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("(Tab to cycle commands)"))
+			content.WriteString(wordwrap.String(lipgloss.NewStyle().Foreground(subtleColor).Render("(Tab to cycle commands)"), m.viewport.Width))
 			content.WriteString("\n")
 		}
 		content.WriteString("\n")
 	} else if m.State == StateExplained {
-		content.WriteString(DescriptionStyle.Render(m.Explanation))
-		content.WriteString("\n(Press Esc to back)")
+		content.WriteString(wordwrap.String(DescriptionStyle.Render(m.Explanation), m.viewport.Width))
+		content.WriteString(wordwrap.String("\n(Press Esc to back)", m.viewport.Width))
 	}
 	
-	m.viewport.SetContent(content.String())
+	str := content.String()
+	m.viewport.SetContent(str)
+	
+	// Dynamic Height Adjustment
+	// Count lines in the rendered content
+	lineCount := lipgloss.Height(str)
+	
+	if lineCount < m.maxHeight {
+		m.viewport.Height = lineCount
+	} else {
+		m.viewport.Height = m.maxHeight
+	}
 }
 
 func (m Model) View() string {
