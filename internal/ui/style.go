@@ -21,6 +21,12 @@ var (
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor)
 
+	InactiveCommandStyle = lipgloss.NewStyle().
+		Foreground(subtleColor).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(subtleColor)
+
 	DescriptionStyle = lipgloss.NewStyle().
 		Foreground(subtleColor).
 		Italic(true)
