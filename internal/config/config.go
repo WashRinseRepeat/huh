@@ -1,13 +1,16 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
+
+//go:embed config.example.yaml
+var defaultConfigFile []byte
 
 type ProviderConfig struct {
 	Type   string            `mapstructure:"type" yaml:"type"`
@@ -55,44 +58,13 @@ func Init() {
 }
 
 func createDefaultConfig(path string) {
-	defaultConfig := Config{
-		DefaultProvider: "ollama",
-		Context: map[string]string{
-			"level":       "basic",
-			"environment": "dev",
-			"preference":  "I hate nano, use vim.",
-		},
-		Providers: map[string]ProviderConfig{
-			"ollama": {
-				Type: "ollama",
-				Params: map[string]string{
-					"model": "llama3:8b",
-					"host":  "http://localhost:11434",
-				},
-			},
-			"openai": {
-				Type: "openai",
-				Params: map[string]string{
-					"model":   "gpt-4-turbo",
-					"api_key": "YOUR_OPENAI_API_KEY",
-				},
-			},
-		},
-	}
-
-	data, err := yaml.Marshal(defaultConfig)
-	if err != nil {
-		fmt.Printf("Error marshaling default config: %v\n", err)
-		return
-	}
-
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Printf("Error creating config directory: %v\n", err)
 		return
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, defaultConfigFile, 0644); err != nil {
 		fmt.Printf("Error writing default config file: %v\n", err)
 		return
 	}

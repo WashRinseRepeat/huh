@@ -1,0 +1,26 @@
+# huh Configuration File
+
+# Default LLM Provider (ollama or openai)
+default_provider: ollama
+
+# User Context
+# Add any custom key-value pairs here. They will be injected into the system prompt.
+# Useful for setting preferences, hardware details, or specific environment variables.
+context:
+  level: basic
+  environment: dev
+  preference: vim is confusing. Use nano when possible. # Example preference
+
+# LLM Providers Configuration
+providers:
+  ollama:
+    type: ollama
+    params:
+      host: http://localhost:11434
+      model: llama3:8b
+
+  openai:
+    type: openai
+    params:
+      api_key: YOUR_OPENAI_API_KEY
+      model: gpt-4-turbo
