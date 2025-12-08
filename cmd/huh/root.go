@@ -59,9 +59,12 @@ var rootCmd = &cobra.Command{
 		contextInfo := strings.Join(contextInfoParts, ", ")
 
 		// 3. Setup Provider
-		provider := llm.NewOllamaProvider()
+		provider, err := llm.NewProvider("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating provider: %v\n", err)
+			os.Exit(1)
+		}
 
-		// 4. Define Query Function
 		// 4. Define Query Function
 		queryFunc := func(q string, dynamicContext string) (string, error) {
 			finalQuestion := q
@@ -71,12 +74,22 @@ var rootCmd = &cobra.Command{
 				finalQuestion = fmt.Sprintf("%s\n\nAttached Context:\n%s", q, dynamicContext)
 			}
 
+            // Build User Context String
+            var customContext strings.Builder
+            if len(sysCtx.Custom) > 0 {
+                customContext.WriteString("User Info: ")
+                for k, v := range sysCtx.Custom {
+                    customContext.WriteString(fmt.Sprintf("%s=%s; ", k, v))
+                }
+            }
+
 			systemPrompt := fmt.Sprintf(
-				"You are a command line helper for %s running %s shell. Your user asks: '%s'.\n"+
-					"If the user asks for a command, provide it inside a markdown code block, like:\n"+
-					"```bash\ncommand here\n```\n"+
-					"You can also provide a brief explanation outside the block. If the user asks a question, answer it normally.",
-				sysCtx.Distro, sysCtx.Shell, q,
+				"Context: OS: %s, Distro: %s, Shell: %s. %s\n"+
+				"User Query: '%s'.\n"+
+				"If the user asks for a command, provide it inside a markdown code block, like:\n"+
+				"```bash\ncommand here\n```\n"+
+				"You can also provide a brief explanation outside the block. If the user asks a question, answer it normally.",
+				sysCtx.OS, sysCtx.Distro, sysCtx.Shell, customContext.String(), q,
 			)
 			
 			return provider.Query(cmd.Context(), systemPrompt, finalQuestion)
@@ -110,8 +123,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// 7. Start TUI
-		opts := []tea.ProgramOption{tea.WithOutput(os.Stderr)} // Standard practice to keep stdout clean? No, TUI usually owns /dev/tty.
-		// If stdin is piped, we MUST use /dev/tty for input
+		opts := []tea.ProgramOption{tea.WithOutput(os.Stderr)}
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
 			f, err := os.Open("/dev/tty")
 			if err == nil {

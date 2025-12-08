@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/spf13/viper"
 )
 
 type OllamaProvider struct {
@@ -16,10 +15,10 @@ type OllamaProvider struct {
 	Model string
 }
 
-func NewOllamaProvider() *OllamaProvider {
+func NewOllamaProvider(host, model string) *OllamaProvider {
 	return &OllamaProvider{
-		Host:  viper.GetString("ollama.host"),
-		Model: viper.GetString("ollama.model"),
+		Host:  host,
+		Model: model,
 	}
 }
 
