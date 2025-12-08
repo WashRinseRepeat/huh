@@ -13,17 +13,18 @@ var (
 	TitleStyle = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(primaryColor).
-		MarginBottom(1)
+		MarginBottom(0)
 
 	CommandStyle = lipgloss.NewStyle().
 		Foreground(secondaryColor).
-		Padding(1, 2).
+		Padding(0, 3).
+		Margin(0, 0).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor)
 
 	InactiveCommandStyle = lipgloss.NewStyle().
 		Foreground(subtleColor).
-		Padding(1, 2).
+		Padding(0, 3).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(subtleColor)
 
