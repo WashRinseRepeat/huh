@@ -9,6 +9,7 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -53,6 +54,10 @@ type Model struct {
 	// Completion
 	Matches    []string
 	MatchIndex int
+
+	// Viewport
+	viewport viewport.Model
+	ready    bool
 }
 
 func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
@@ -93,13 +98,31 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var (
+		cmd  tea.Cmd
+		cmds []tea.Cmd
+	)
+
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		headerHeight := lipgloss.Height(TitleStyle.Render("Header"))
+		footerHeight := lipgloss.Height("Footer")
+		verticalMarginHeight := headerHeight + footerHeight
+
+		if !m.ready {
+			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight)
+			m.viewport.YPosition = headerHeight
+			m.ready = true
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height - verticalMarginHeight
+		}
+
 	case SuggestionMsg:
 		m.Suggestion = string(msg)
 		m.Explanation = "" // Clear previous if any
 		m.State = StateSuggestion
 		
-		// Parse Markdown Code Blocks
 		// Parse Markdown Code Blocks
 		// Use regex to find all code blocks
 		re := regexp.MustCompile("(?s)```(.*?)```")
@@ -124,9 +147,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.ActiveCommandIndex = -1
 		}
+		m.updateViewportContent()
+
 	case ExplanationMsg:
 		m.Explanation = string(msg)
 		m.State = StateExplained
+		m.updateViewportContent()
+
 	case ErrorMsg:
 		m.Err = msg
 		m.State = StateError
@@ -304,22 +331,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "tab":
 				if len(m.RunnableCommands) > 1 {
 					m.ActiveCommandIndex = (m.ActiveCommandIndex + 1) % len(m.RunnableCommands)
+					m.updateViewportContent()
 				}
 				return m, nil
-			case "up", "k":
+			case "shift+tab":
+				if len(m.RunnableCommands) > 1 {
+					m.ActiveCommandIndex--
+					if m.ActiveCommandIndex < 0 {
+						m.ActiveCommandIndex = len(m.RunnableCommands) - 1
+					}
+					m.updateViewportContent()
+				}
+				return m, nil
+			case "left", "h":
 				if m.SelectedOption > 0 {
 					m.SelectedOption--
 				}
-			case "down", "j":
+			case "right", "l":
 				if m.SelectedOption < len(m.Options)-1 {
 					m.SelectedOption++
 				}
+			case "up", "k":
+				m.viewport.LineUp(1)
+			case "down", "j":
+				m.viewport.LineDown(1)
+			case "pgup", "ctrl+u":
+				m.viewport.LineUp(m.viewport.Height / 2)
+			case "pgdown", "ctrl+d":
+				m.viewport.LineDown(m.viewport.Height / 2)
 			case "enter":
+				// If at bottom and scrolling down, maybe Enter on simple text does nothing?
+				// But Enter triggers selection.
 				return m.handleSelection()
 			}
 		case StateExplained:
-			if msg.String() == "esc" || msg.String() == "q" {
+			switch msg.String() {
+			case "esc", "q":
 				m.State = StateSuggestion // Go back
+			case "up", "k":
+				m.viewport.LineUp(1)
+			case "down", "j":
+				m.viewport.LineDown(1)
+			case "pgup", "ctrl+u", "shift+up":
+				m.viewport.LineUp(m.viewport.Height / 2)
+			case "pgdown", "ctrl+d", "shift+down":
+				m.viewport.LineDown(m.viewport.Height / 2)
 			}
 		case StateError:
 			if msg.String() == "q" || msg.String() == "ctrl+c" {
@@ -327,7 +383,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, nil
+
+	
+	// Handle viewport updates
+	m.viewport, cmd = m.viewport.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleSelection() (tea.Model, tea.Cmd) {
@@ -378,7 +440,53 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) updateViewportContent() {
+	var content strings.Builder
+	
+	if m.State == StateSuggestion {
+		if len(m.RunnableCommands) > 0 && strings.Contains(m.Suggestion, "```") {
+			// Split by code blocks
+			parts := strings.Split(m.Suggestion, "```")
+			cmdIndex := 0
+			for i, part := range parts {
+				if i%2 == 1 { // Inside code block
+					if cmdIndex < len(m.RunnableCommands) {
+						cmdVal := m.RunnableCommands[cmdIndex]
+						style := InactiveCommandStyle
+						if cmdIndex == m.ActiveCommandIndex {
+							style = CommandStyle
+						}
+						content.WriteString(style.Render(cmdVal))
+						cmdIndex++
+					} else {
+						content.WriteString(InactiveCommandStyle.Render(part))
+					}
+				} else { // Outside code block
+					content.WriteString(part)
+				}
+			}
+		} else {
+			content.WriteString(m.Suggestion)
+		}
+		
+		content.WriteString("\n")
+		if len(m.RunnableCommands) > 1 {
+			content.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("(Tab to cycle commands)"))
+			content.WriteString("\n")
+		}
+		content.WriteString("\n")
+	} else if m.State == StateExplained {
+		content.WriteString(DescriptionStyle.Render(m.Explanation))
+		content.WriteString("\n(Press Esc to back)")
+	}
+	
+	m.viewport.SetContent(content.String())
+}
+
 func (m Model) View() string {
+	if !m.ready {
+		return "\n  Initializing..."
+	}
 	var s strings.Builder
 
 	switch m.State {
@@ -477,61 +585,26 @@ func (m Model) View() string {
 		s.WriteString(TitleStyle.Render("Suggestion:"))
 		s.WriteString("\n")
 		
-		// Render mixed content
-
-		if len(m.RunnableCommands) > 0 && strings.Contains(m.Suggestion, "```") {
-			// Split by code blocks
-			parts := strings.Split(m.Suggestion, "```")
-			cmdIndex := 0
-			for i, part := range parts {
-				if i%2 == 1 { // Inside code block
-					// We already parsed the commands, so we can just grab from m.RunnableCommands
-					// BUT we need to map positionally. 
-					// Assumption: The order matches m.RunnableCommands.
-					if cmdIndex < len(m.RunnableCommands) {
-						content := m.RunnableCommands[cmdIndex]
-						style := InactiveCommandStyle
-						if cmdIndex == m.ActiveCommandIndex {
-							style = CommandStyle
-						}
-						s.WriteString(style.Render(content))
-						cmdIndex++
-					} else {
-						// Safe fallback
-						s.WriteString(InactiveCommandStyle.Render(part))
-					}
-				} else { // Outside code block
-					s.WriteString(part)
-				}
-			}
-		} else {
-			// Pure text response or fallback
-			s.WriteString(m.Suggestion)
-		}
-
+		s.WriteString(m.viewport.View())
 		
-		s.WriteString("\n\n")
-		if len(m.RunnableCommands) > 1 {
-			s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("(Tab to cycle commands)"))
-			s.WriteString("\n\n")
-		}
-		s.WriteString("What next?\n")
-		
+		s.WriteString("\n")
+		// Render Options Horizontally
+		var options []string
 		for i, opt := range m.Options {
-			cursor := " "
 			style := ItemStyle
 			if m.SelectedOption == i {
-				cursor = ">"
 				style = SelectedItemStyle
 			}
-			s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, opt)) + "\n")
+			options = append(options, style.Render(opt))
 		}
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, options...))
+		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (<-/-> to select, Enter to confirm)"))
 
 	case StateExplained:
 		s.WriteString(TitleStyle.Render("Explanation:"))
 		s.WriteString("\n")
-		s.WriteString(DescriptionStyle.Render(m.Explanation))
-		s.WriteString("\n\n(Press Esc to back)")
+		
+		s.WriteString(m.viewport.View())
 
 	case StateError:
 		s.WriteString(TitleStyle.Foreground(errorColor).Render("Error:"))
