@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -45,6 +46,10 @@ type Model struct {
 
 	// Focus
 	FocusIndex int // 0: Input, 1: AttachButton
+
+	// Completion
+	Matches    []string
+	MatchIndex int
 }
 
 func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
@@ -185,11 +190,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateFilePrompt:
 			switch msg.String() {
+			case "tab":
+				// Auto-complete logic
+				input := m.Input.Value()
+				if input == "" {
+					input = "" // Keep empty to match * in getMatches
+				}
+				
+				// New completion query
+				if m.Matches == nil {
+					matches, err := getMatches(input)
+					if err == nil && len(matches) > 0 {
+						m.Matches = matches
+						m.MatchIndex = 0
+						// Set initial match immediately
+						m.Input.SetValue(m.Matches[0])
+						m.Input.SetCursor(len(m.Input.Value()))
+						return m, nil
+					}
+				}
+				
+				// Cycle matches
+				if len(m.Matches) > 0 {
+					// Increment FIRST, then set
+					m.MatchIndex = (m.MatchIndex + 1) % len(m.Matches)
+					
+					current := m.Matches[m.MatchIndex]
+					m.Input.SetValue(current)
+					m.Input.SetCursor(len(m.Input.Value()))
+				}
+				return m, nil
+
 			case "enter":
 				path := m.Input.Value()
 				if path != "" {
-					// Read file (sync for simplicity, or could be Cmd)
-					// Verify file exists
+					// Check if directory
+					info, err := os.Stat(path)
+					if err == nil && info.IsDir() {
+						// Do nothing on directories (require explicit / to drill)
+						return m, nil
+					}
+					
+					// Read file
 					b, err := os.ReadFile(path)
 					if err != nil {
 						m.Err = fmt.Errorf("read error: %v", err)
@@ -210,13 +252,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.Input.SetValue("") // Clear input for question/refinement
 					m.FocusIndex = 0     // Reset focus to input
 					m.Input.Focus()
-					
-					// Restore placeholders logic
-					if m.State == StateInput {
-						m.Input.Placeholder = "e.g. how do I..."
-					} else {
-						m.Input.Placeholder = "e.g. make it recursive"
-					}
 					return m, nil
 				}
 			case "esc":
@@ -226,6 +261,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			var cmd tea.Cmd
+			// Reset completion if user types
+			if msg.String() != "tab" {
+				m.Matches = nil
+			}
 			m.Input, cmd = m.Input.Update(msg)
 			return m, cmd
 
@@ -337,6 +376,42 @@ func (m Model) View() string {
 		s.WriteString(m.Input.View())
 		s.WriteString("\n\n(Press Enter to attach, Esc to cancel)")
 
+		// Render Matches
+		if len(m.Matches) > 0 {
+			s.WriteString("\n\n")
+			s.WriteString(TitleStyle.Render("Suggestions:"))
+			s.WriteString("\n")
+			
+			// Limit to 5 matches for cleaner UI
+			start := 0
+			end := len(m.Matches)
+			if end > 5 {
+				// Simple windowing logic could be added here, for now just slice
+				if m.MatchIndex >= 5 {
+					start = m.MatchIndex - 4
+				}
+				if start + 5 < end {
+					end = start + 5
+				}
+			}
+
+			for i := start; i < end; i++ {
+				match := m.Matches[i]
+				cursor := " "
+				style := ItemStyle
+				if i == m.MatchIndex {
+					cursor = ">"
+					style = SelectedItemStyle
+				}
+				// Show relative path or just basename? Full path is clearer for now.
+				s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, match)) + "\n")
+			}
+			
+			if len(m.Matches) > 5 {
+				s.WriteString(ItemStyle.Render("..."))
+			}
+		}
+
 	case StateLoading:
 		if m.Explanation == "" && m.Suggestion != "" {
 			s.WriteString("Explaining...")
@@ -388,3 +463,31 @@ func SetSuggestion(cmd string) tea.Msg {
 type SuggestionMsg string
 type ExplanationMsg string
 type ErrorMsg error
+
+func getMatches(pattern string) ([]string, error) {
+	// Expand ~
+	if strings.HasPrefix(pattern, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			pattern = filepath.Join(home, pattern[1:])
+		}
+	}
+	
+	// Add * for prefix matching
+	search := pattern + "*"
+	matches, err := filepath.Glob(search)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Filter out hidden files unless pattern starts with .
+	// Actually Glob handles standard logic.
+	// But let's support directory traversal hints (add / if dir)
+	
+	var processed []string
+	for _, m := range matches {
+		processed = append(processed, m)
+	}
+	
+	return processed, nil
+}
