@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -32,6 +33,7 @@ type Model struct {
 	ContextInfo    string // Display string (e.g. "Attached: foo.txt")
 	ContextContent string // Actual content
 	Suggestion     string
+	RunnableCommand string // Extracted command for execution/copy
 	Explanation    string
 	Err          error
 	
@@ -95,6 +97,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Suggestion = string(msg)
 		m.Explanation = "" // Clear previous if any
 		m.State = StateSuggestion
+		
+		// Parse Markdown Code Blocks
+		// Use regex to find all code blocks and take the last one
+		// Regex: (?s)```(.*?)``` matches balanced backticks, dot matches newlines
+		re := regexp.MustCompile("(?s)```(.*?)```")
+		matches := re.FindAllStringSubmatch(m.Suggestion, -1)
+		
+		if len(matches) > 0 {
+			// Take the content of the last match (capture group 1)
+			lastMatch := matches[len(matches)-1]
+			raw := lastMatch[1]
+			
+			// Trim first line if it's a language identifier
+			// Also trim surrounding whitespace
+			raw = strings.TrimSpace(raw)
+			if idx := strings.Index(raw, "\n"); idx != -1 {
+				// Check if the top line is a single word (lang identifier)
+				firstLine := raw[:idx]
+				if !strings.Contains(firstLine, " ") {
+					raw = strings.TrimSpace(raw[idx+1:])
+				}
+			}
+			m.RunnableCommand = raw
+		} else {
+			m.RunnableCommand = ""
+		}
 	case ExplanationMsg:
 		m.Explanation = string(msg)
 		m.State = StateExplained
@@ -300,7 +328,12 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 	selected := m.Options[m.SelectedOption]
 	switch selected {
 	case "Copy":
-		if err := clipboard.WriteAll(m.Suggestion); err != nil {
+		if m.RunnableCommand == "" {
+			m.Err = fmt.Errorf("no executable command found to copy")
+			m.State = StateError
+			return m, nil
+		}
+		if err := clipboard.WriteAll(m.RunnableCommand); err != nil {
 			m.Err = fmt.Errorf("failed to copy: %v (install wl-clipboard or xclip)", err)
 			m.State = StateError
 			return m, nil
@@ -309,13 +342,24 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 	case "Explain":
 		m.State = StateLoading // Show loading while explaining
 		return m, func() tea.Msg {
-			exp, err := m.ExplainFunc(m.Suggestion, m.ContextContent)
+			// Explain either the full text or just the command?
+			// Probably the user wants to understand the command if there is one.
+			target := m.Suggestion
+			if m.RunnableCommand != "" {
+				target = m.RunnableCommand
+			}
+			exp, err := m.ExplainFunc(target, m.ContextContent)
 			if err != nil {
 				return ErrorMsg(err)
 			}
 			return ExplanationMsg(exp)
 		}
 	case "Edit":
+		if m.RunnableCommand == "" {
+			m.Err = fmt.Errorf("no command to edit")
+			m.State = StateError
+			return m, nil
+		}
 		m.State = StateRefining
 		m.Input.SetValue("")
 		m.Input.Placeholder = "e.g. add a recursive flag"
@@ -425,7 +469,42 @@ func (m Model) View() string {
 	case StateSuggestion:
 		s.WriteString(TitleStyle.Render("Suggestion:"))
 		s.WriteString("\n")
-		s.WriteString(CommandStyle.Render(m.Suggestion))
+		
+		// Render mixed content
+		if m.RunnableCommand != "" && strings.Contains(m.Suggestion, "```") {
+			// Split by code blocks
+			parts := strings.Split(m.Suggestion, "```")
+			for i, part := range parts {
+				if i%2 == 1 { // Inside code block
+					// Remove valid language identifier if present on first line
+					content := part
+					if idx := strings.Index(content, "\n"); idx != -1 {
+						// e.g. "bash\nls -la" -> "ls -la"
+						// But wait, our splitting kept the newlines.
+						// Simple heuristic: if first line is single word, drop it.
+						firstLine := content[:idx]
+						if !strings.Contains(firstLine, " ") {
+							content = content[idx+1:]
+						}
+					}
+					s.WriteString(CommandStyle.Render(strings.TrimSpace(content)))
+				} else { // Outside code block
+					s.WriteString(part)
+				}
+			}
+		} else {
+			// No code block or plain text
+			if m.RunnableCommand != "" {
+				// Fallback if parsing weirdness, just render all as command? 
+				// No, if Runnable exists, we probably parsed it.
+				// If we are here, likely just plain text response.
+				s.WriteString(m.Suggestion)
+			} else {
+				// Pure text response
+				s.WriteString(m.Suggestion)
+			}
+		}
+		
 		s.WriteString("\n\n")
 		s.WriteString("What next?\n")
 		

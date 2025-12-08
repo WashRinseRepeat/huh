@@ -62,26 +62,20 @@ var rootCmd = &cobra.Command{
 		provider := llm.NewOllamaProvider()
 
 		// 4. Define Query Function
+		// 4. Define Query Function
 		queryFunc := func(q string, dynamicContext string) (string, error) {
 			finalQuestion := q
 			
-			// Merge Contexts
-			var fullContext strings.Builder
-			if attachedContent != "" {
-				fullContext.WriteString(attachedContent)
-				fullContext.WriteString("\n")
-			}
+			// Context is managed by the UI model and passed as dynamicContext
 			if dynamicContext != "" {
-				fullContext.WriteString(dynamicContext)
-			}
-			
-			mergedContext := fullContext.String()
-			if mergedContext != "" {
-				finalQuestion = fmt.Sprintf("%s\n\nAttached Context:\n%s", q, mergedContext)
+				finalQuestion = fmt.Sprintf("%s\n\nAttached Context:\n%s", q, dynamicContext)
 			}
 
 			systemPrompt := fmt.Sprintf(
-				"You are a command line helper for %s running %s shell. Your user asks: '%s'. Return ONLY the command to run, no markdown, no explanation.", 
+				"You are a command line helper for %s running %s shell. Your user asks: '%s'.\n"+
+					"If the user asks for a command, provide it inside a markdown code block, like:\n"+
+					"```bash\ncommand here\n```\n"+
+					"You can also provide a brief explanation outside the block. If the user asks a question, answer it normally.",
 				sysCtx.Distro, sysCtx.Shell, q,
 			)
 			
@@ -92,43 +86,24 @@ var rootCmd = &cobra.Command{
 		explainFunc := func(command string, dynamicContext string) (string, error) {
 			prompt := fmt.Sprintf("Explain the following command briefly: '%s'", command)
 			
-			// Merge Contexts
-			var fullContext strings.Builder
-			if attachedContent != "" {
-				fullContext.WriteString(attachedContent)
-				fullContext.WriteString("\n")
-			}
 			if dynamicContext != "" {
-				fullContext.WriteString(dynamicContext)
+				prompt += fmt.Sprintf("\n\nContext:\n%s", dynamicContext)
 			}
-			
-			mergedContext := fullContext.String()
-			if mergedContext != "" {
-				prompt += fmt.Sprintf("\n\nContext:\n%s", mergedContext)
-			}
-			return provider.Query(cmd.Context(), "You are a helpful assistant explaining Linux commands.", prompt)
+			return provider.Query(cmd.Context(), "You are a helpful assistant explaining Linux commands. Be concise.", prompt)
 		}
 
 		// 6. Define Refine Function
 		refineFunc := func(originalCommand, refinement, dynamicContext string) (string, error) {
 			refinePrompt := fmt.Sprintf(
-				"Original Request: '%s'. Original Command: '%s'. Refinement Request: '%s'. Return ONLY the updated command, no markdown, no explanation.", 
+				"Original Request: '%s'. Original Command: '%s'. Refinement Request: '%s'.\n"+
+					"Return the updated command inside a markdown code block:\n"+
+					"```bash\nnew command\n```\n"+
+					"You may explain the change briefly if needed.",
 				question, originalCommand, refinement,
 			)
 			
-			// Merge Contexts
-			var fullContext strings.Builder
-			if attachedContent != "" {
-				fullContext.WriteString(attachedContent)
-				fullContext.WriteString("\n")
-			}
 			if dynamicContext != "" {
-				fullContext.WriteString(dynamicContext)
-			}
-			
-			mergedContext := fullContext.String()
-			if mergedContext != "" {
-				refinePrompt += fmt.Sprintf("\n\nContext:\n%s", mergedContext)
+				refinePrompt += fmt.Sprintf("\n\nContext:\n%s", dynamicContext)
 			}
 			systemPrompt := fmt.Sprintf("You are a command line helper for %s. Update the command based on user request.", sysCtx.Distro)
 			return provider.Query(cmd.Context(), systemPrompt, refinePrompt)
