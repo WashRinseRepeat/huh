@@ -68,7 +68,7 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 	
 	if question == "" {
 		initialState = StateInput
-		ti.Placeholder = "e.g. how do I check disk space?"
+		ti.Placeholder = "example: how do I check disk space?"
 		ti.Focus()
 	}
 
@@ -436,7 +436,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 		}
 		m.State = StateRefining
 		m.Input.SetValue("") // Should we pre-fill? Probably not per previous logic.
-		m.Input.Placeholder = "e.g. add a recursive flag"
+		m.Input.Placeholder = "example: how do I check disk space?"
 		m.Input.Focus()
 		return m, textinput.Blink
 
@@ -549,7 +549,7 @@ func (m Model) View() string {
 		if m.FocusIndex == 1 {
 			btnStyle = SelectedItemStyle
 		}
-		s.WriteString(btnStyle.Render("[ Attach File ]"))
+		s.WriteString(btnStyle.Render("[Attach File]"))
 
 		s.WriteString("\n\n(Tab to select, Enter to confirm, Esc to cancel)")
 

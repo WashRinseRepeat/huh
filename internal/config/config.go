@@ -47,6 +47,9 @@ func Init() {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 			// Config file not found; create default
 			createDefaultConfig(configPath)
+			if err := viper.ReadInConfig(); err != nil {
+				fmt.Printf("Error reading newly created config file: %s\n", err)
+			}
 		} else {
 			fmt.Printf("Error reading config file: %s\n", err)
 		}
