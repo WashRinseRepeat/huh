@@ -3,6 +3,16 @@
 # Default LLM Provider (ollama or openai)
 default_provider: ollama
 
+# System Prompt
+# Customize the instructions given to the LLM.
+# Keep the instructions about "markdown code block" if you want the TUI to function correctly.
+system_prompt: |
+  If the user asks for a command, provide it inside a markdown code block, like:
+  ```bash
+  command here
+  ```
+  You can also provide a brief explanation outside the block. If the user asks a question, answer it normally.
+
 # User Context
 # Add any custom key-value pairs here. They will be injected into the system prompt.
 # Useful for setting preferences, hardware details, or specific environment variables.

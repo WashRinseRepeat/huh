@@ -19,6 +19,7 @@ type ProviderConfig struct {
 
 type Config struct {
 	DefaultProvider string                    `mapstructure:"default_provider" yaml:"default_provider"`
+	SystemPrompt    string                    `mapstructure:"system_prompt" yaml:"system_prompt"`
 	Context         map[string]string         `mapstructure:"context" yaml:"context"`
 	Providers       map[string]ProviderConfig `mapstructure:"providers" yaml:"providers"`
 }
@@ -42,6 +43,7 @@ func Init() {
 	// Defaults
 	viper.SetDefault("default_provider", "ollama")
 	viper.SetDefault("context", map[string]string{"level": "basic"})
+	viper.SetDefault("system_prompt", "") // Default handled in code if empty
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
