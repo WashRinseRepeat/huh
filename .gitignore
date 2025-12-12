@@ -1,2 +1,18 @@
+# Binaries
 huh
-.vscode/settings.json
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Output
+dist/
+bin/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Go
+go.work

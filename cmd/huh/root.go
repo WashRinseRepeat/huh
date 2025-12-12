@@ -83,13 +83,18 @@ var rootCmd = &cobra.Command{
                 }
             }
 
+			baseSystemPrompt := config.AppConfig.SystemPrompt
+			if baseSystemPrompt == "" {
+				baseSystemPrompt = "If the user asks for a command, provide it inside a markdown code block, like:\n" +
+					"```bash\ncommand here\n```\n" +
+					"You can also provide a brief explanation outside the block. If the user asks a question, answer it normally."
+			}
+
 			systemPrompt := fmt.Sprintf(
 				"Context: OS: %s, Distro: %s, Shell: %s. %s\n"+
 				"User Query: '%s'.\n"+
-				"If the user asks for a command, provide it inside a markdown code block, like:\n"+
-				"```bash\ncommand here\n```\n"+
-				"You can also provide a brief explanation outside the block. If the user asks a question, answer it normally.",
-				sysCtx.OS, sysCtx.Distro, sysCtx.Shell, customContext.String(), q,
+				"%s",
+				sysCtx.OS, sysCtx.Distro, sysCtx.Shell, customContext.String(), q, baseSystemPrompt,
 			)
 			
 			return provider.Query(cmd.Context(), systemPrompt, finalQuestion)
