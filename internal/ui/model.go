@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"time"
+
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -22,6 +24,7 @@ const (
 	StateRefining
 	StateFilePrompt
 	StateLoading
+	StateSuccessAnim
 	StateSuggestion
 	StateExplained
 	StateError
@@ -35,10 +38,14 @@ type Model struct {
 	ContextInfo        string // Display string (e.g. "Attached: foo.txt")
 	ContextContent     string // Actual content
 	Suggestion         string
+	PendingSuggestion  string   // Holds suggestion during success animation
 	RunnableCommands   []string // Extracted commands for execution/copy
 	ActiveCommandIndex int      // Which command is currently selected
 	Explanation        string
 	Err                error
+
+	// Animation
+	AnimationFrame int
 
 	// Query
 	QueryFunc   func(string, string) (string, error)
@@ -87,16 +94,24 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 }
 
 func (m Model) Init() tea.Cmd {
+	var cmds []tea.Cmd
 	if m.State == StateInput {
-		return textinput.Blink
+		cmds = append(cmds, textinput.Blink)
 	}
-	return func() tea.Msg {
-		res, err := m.QueryFunc(m.Question, m.ContextContent)
-		if err != nil {
-			return ErrorMsg(err)
-		}
-		return SuggestionMsg(res)
+	// Always perform query if in loading state (initial state might be loading)
+	if m.State == StateLoading {
+		cmds = append(cmds,
+			func() tea.Msg {
+				res, err := m.QueryFunc(m.Question, m.ContextContent)
+				if err != nil {
+					return ErrorMsg(err)
+				}
+				return SuggestionMsg(res)
+			},
+			tick(),
+		)
 	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -124,8 +139,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-render content with new width
 		m.updateViewportContent()
 
+	case TickMsg:
+		if m.State == StateLoading {
+			m.AnimationFrame++
+			return m, tick()
+		}
+
 	case SuggestionMsg:
-		m.Suggestion = string(msg)
+		// Transition to Success Animation
+		m.PendingSuggestion = string(msg)
+		m.State = StateSuccessAnim
+		return m, waitForSuccess()
+
+	case SuccessTimeoutMsg:
+		m.Suggestion = m.PendingSuggestion
+		m.PendingSuggestion = ""
 		m.Explanation = "" // Clear previous if any
 		m.State = StateSuggestion
 
@@ -191,13 +219,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Question = m.Input.Value()
 				if m.Question != "" {
 					m.State = StateLoading
-					return m, func() tea.Msg {
-						res, err := m.QueryFunc(m.Question, m.ContextContent)
-						if err != nil {
-							return ErrorMsg(err)
-						}
-						return SuggestionMsg(res)
-					}
+					return m, tea.Batch(
+						func() tea.Msg {
+							res, err := m.QueryFunc(m.Question, m.ContextContent)
+							if err != nil {
+								return ErrorMsg(err)
+							}
+							return SuggestionMsg(res)
+						},
+						tick(),
+					)
 				}
 			case "ctrl+c", "esc":
 				return m, tea.Quit
@@ -242,13 +273,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.Suggestion = ""
 
 					m.State = StateLoading
-					return m, func() tea.Msg {
-						res, err := m.RefineFunc(currentSuggestion, refinement, m.ContextContent)
-						if err != nil {
-							return ErrorMsg(err)
-						}
-						return SuggestionMsg(res)
-					}
+					return m, tea.Batch(
+						func() tea.Msg {
+							res, err := m.RefineFunc(currentSuggestion, refinement, m.ContextContent)
+							if err != nil {
+								return ErrorMsg(err)
+							}
+							return SuggestionMsg(res)
+						},
+						tick(),
+					)
 				}
 			case "esc":
 				m.State = StateSuggestion
@@ -605,14 +639,38 @@ func (m Model) View() string {
 		}
 
 	case StateLoading:
-		if m.Explanation == "" && m.Suggestion != "" {
-			s.WriteString("Explaining...")
-		} else {
-			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
+		if m.Explanation == "" && m.Suggestion == "" {
+			// Robot Animation
+			frame1 := `
+      /----\
+  ?   |O O |
+      \____/`
+
+			frame2 := `
+      /----\
+      | O O|   ?
+      \____/`
+
+			if m.AnimationFrame%2 == 0 {
+				s.WriteString(frame1)
+			} else {
+				s.WriteString(frame2)
+			}
+			s.WriteString(fmt.Sprintf("\n\nThinking about: %s...", m.Question))
 			if m.ContextInfo != "" {
 				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
 			}
+		} else {
+			s.WriteString("Explaining...")
 		}
+
+	case StateSuccessAnim:
+		foundFrame := `
+       /----\ 
+    !! |O  O| !!
+       \____/`
+		s.WriteString(foundFrame)
+		s.WriteString(fmt.Sprintf("\n\nThinking about: %s...", m.Question))
 
 	case StateSuggestion:
 		s.WriteString(TitleStyle.Render("Suggestion:"))
@@ -657,6 +715,20 @@ func SetSuggestion(cmd string) tea.Msg {
 type SuggestionMsg string
 type ExplanationMsg string
 type ErrorMsg error
+type TickMsg time.Time
+type SuccessTimeoutMsg time.Time
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Millisecond*750, func(t time.Time) tea.Msg {
+		return TickMsg(t)
+	})
+}
+
+func waitForSuccess() tea.Cmd {
+	return tea.Tick(time.Millisecond*250, func(t time.Time) tea.Msg {
+		return SuccessTimeoutMsg(t)
+	})
+}
 
 func getMatches(pattern string) ([]string, error) {
 	// Expand ~
