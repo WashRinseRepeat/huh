@@ -1,17 +1,20 @@
 # huh Configuration File
 
-# Default LLM Provider (ollama or openai)
+# Default LLM Provider (ollama, openai, openrouter)
 default_provider: ollama
 
 # System Prompt
 # Customize the instructions given to the LLM.
 # Keep the instructions about "markdown code block" if you want the TUI to function correctly.
 system_prompt: |
+  You are a helpful CLI assistant.
+  Always explain the command briefly before showing the code block.
+  If a sequence of commands is suggested, explain each command briefly before showing the code block containing the commands in sequence.
   If the user asks for a command, provide it inside a markdown code block, like:
   ```bash
   command here
   ```
-  You can also provide a brief explanation outside the block. If the user asks a question, answer it normally.
+  If the user asks a question, answer it normally.
 
 # User Context
 # Add any custom key-value pairs here. They will be injected into the system prompt.

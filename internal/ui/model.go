@@ -30,6 +30,11 @@ const (
 	StateError
 )
 
+type CommandLayout struct {
+	Y      int
+	Height int
+}
+
 type Model struct {
 	State              State
 	PreviousState      State // To return after file prompt
@@ -62,6 +67,9 @@ type Model struct {
 	// Completion
 	Matches    []string
 	MatchIndex int
+
+	// Scroll Tracking
+	CommandLayouts []CommandLayout
 
 	// Viewport
 	viewport  viewport.Model
@@ -300,7 +308,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateFilePrompt:
 			switch msg.String() {
-			case "tab":
+			case "tab", "shift+tab", "up", "down":
 				// Auto-complete logic
 				input := m.Input.Value()
 				if input == "" {
@@ -322,8 +330,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Cycle matches
 				if len(m.Matches) > 0 {
-					// Increment FIRST, then set
-					m.MatchIndex = (m.MatchIndex + 1) % len(m.Matches)
+					direction := 1
+					key := msg.String()
+					if key == "shift+tab" || key == "up" {
+						direction = -1
+					}
+
+					m.MatchIndex += direction
+					// Wrap around
+					if m.MatchIndex < 0 {
+						m.MatchIndex = len(m.Matches) - 1
+					} else if m.MatchIndex >= len(m.Matches) {
+						m.MatchIndex = 0
+					}
 
 					current := m.Matches[m.MatchIndex]
 					m.Input.SetValue(current)
@@ -360,7 +379,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Return to previous state
 					m.State = m.PreviousState
 					m.Input.SetValue("") // Clear input for question/refinement
-					m.FocusIndex = 0     // Reset focus to input
+
+					// Restore placeholder
+					if m.State == StateRefining {
+						m.Input.Placeholder = "Your follow-up question here..."
+					} else {
+						m.Input.Placeholder = "e.g. how do I check disk space?"
+					}
+
+					m.FocusIndex = 0 // Reset focus to input
 					m.Input.Focus()
 					return m, nil
 				}
@@ -386,6 +413,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.RunnableCommands) > 1 {
 					m.ActiveCommandIndex = (m.ActiveCommandIndex + 1) % len(m.RunnableCommands)
 					m.updateViewportContent()
+					m.ensureVisible(m.ActiveCommandIndex)
 				}
 				return m, nil
 			case "shift+tab":
@@ -395,6 +423,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.ActiveCommandIndex = len(m.RunnableCommands) - 1
 					}
 					m.updateViewportContent()
+					m.ensureVisible(m.ActiveCommandIndex)
 				}
 				return m, nil
 			case "left", "h":
@@ -500,11 +529,17 @@ func (m *Model) updateViewportContent() {
 	// Ensure we reserve some padding if needed, but viewport width is usually sufficient
 	// wrapper := lipgloss.NewStyle().Width(m.viewport.Width)
 
+	// Clear positions
+	m.CommandLayouts = nil
+
 	if m.State == StateSuggestion {
 		if len(m.RunnableCommands) > 0 && strings.Contains(m.Suggestion, "```") {
 			// Split by code blocks
 			parts := strings.Split(m.Suggestion, "```")
 			cmdIndex := 0
+			// Track current line count
+			currentLine := 0
+
 			for i, part := range parts {
 				if i%2 == 1 { // Inside code block
 					if cmdIndex < len(m.RunnableCommands) {
@@ -513,20 +548,37 @@ func (m *Model) updateViewportContent() {
 						if cmdIndex == m.ActiveCommandIndex {
 							style = CommandStyle
 						}
-						// Commands are usually short, but let's wrap just in case or truncation?
-						// Code blocks usually scroll horizontally or wrap poorly.
-						// Let's assume commands fit or soft wrap naturally.
-						content.WriteString(style.Render(cmdVal))
+
+						// Render command
+						renderedCmd := style.Render(cmdVal)
+						content.WriteString(renderedCmd)
+
+						// Record position
+						h := lipgloss.Height(renderedCmd)
+						m.CommandLayouts = append(m.CommandLayouts, CommandLayout{Y: currentLine, Height: h})
+
+						// Advance line count
+						currentLine += h
+
 						cmdIndex++
 					} else {
-						content.WriteString(wordwrap.String(InactiveCommandStyle.Render(part), m.viewport.Width))
+						// Fallback if mismatched
+						rendered := wordwrap.String(InactiveCommandStyle.Render(part), m.viewport.Width)
+						content.WriteString(rendered)
+						currentLine += lipgloss.Height(rendered)
 					}
 				} else { // Outside code block
-					content.WriteString(wordwrap.String(part, m.viewport.Width))
+					rendered := wordwrap.String(part, m.viewport.Width)
+					content.WriteString(rendered)
+					currentLine += lipgloss.Height(rendered)
 				}
 			}
 		} else {
-			content.WriteString(wordwrap.String(m.Suggestion, m.viewport.Width))
+			rendered := wordwrap.String(m.Suggestion, m.viewport.Width)
+			content.WriteString(rendered)
+			// Assuming single command if any (but usually logic above handles it)
+			// If purely text, no commands positions to track unless we parse implicit logic?
+			// The original logic just dumps string.
 		}
 
 		content.WriteString("\n")
@@ -551,6 +603,30 @@ func (m *Model) updateViewportContent() {
 		m.viewport.Height = lineCount
 	} else {
 		m.viewport.Height = m.maxHeight
+	}
+}
+
+func (m *Model) ensureVisible(index int) {
+	if index < 0 || index >= len(m.CommandLayouts) {
+		return
+	}
+
+	layout := m.CommandLayouts[index]
+
+	// Check if top is above viewport
+	if layout.Y < m.viewport.YOffset {
+		m.viewport.SetYOffset(layout.Y)
+	} else if layout.Y+layout.Height > m.viewport.YOffset+m.viewport.Height {
+		// Check if bottom is below viewport
+		// Try to align bottom of command with bottom of viewport
+		targetY := layout.Y + layout.Height - m.viewport.Height
+		// But don't scroll past top if command is taller than viewport?
+		// If command is taller than viewport, align top.
+		if layout.Height > m.viewport.Height {
+			m.viewport.SetYOffset(layout.Y)
+		} else {
+			m.viewport.SetYOffset(targetY)
+		}
 	}
 }
 
@@ -628,13 +704,25 @@ func (m Model) View() string {
 			for i := start; i < end; i++ {
 				match := m.Matches[i]
 				cursor := " "
-				style := ItemStyle
+				// Show relative path or just basename? Full path is clearer for now.
+				cursorStyle := ItemStyle
+				textStyle := ItemStyle
+
+				if strings.HasSuffix(match, "/") {
+					textStyle = DirectoryStyle
+				}
+
 				if i == m.MatchIndex {
 					cursor = ">"
-					style = SelectedItemStyle
+					cursorStyle = SelectedItemStyle
+					textStyle = SelectedItemStyle // Selected overrides style? Or maybe keep blue but bold?
+					// Let's keep selected style for text to ensure visibility, maybe bold blue?
+					if strings.HasSuffix(match, "/") {
+						textStyle = SelectedItemStyle.Copy().Foreground(lipgloss.Color("33"))
+					}
 				}
-				// Show relative path or just basename? Full path is clearer for now.
-				s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, match)) + "\n")
+
+				s.WriteString(cursorStyle.Render(cursor) + " " + textStyle.Render(match) + "\n")
 			}
 
 			if len(m.Matches) > 5 {
@@ -643,29 +731,36 @@ func (m Model) View() string {
 		}
 
 	case StateLoading:
-		if m.Explanation == "" && m.Suggestion == "" {
-			// Robot Animation
-			frame1 := `
+		// Robot Animation
+		frame1 := `
       /----\
   ?   |O O |
       \____/`
 
-			frame2 := `
+		frame2 := `
       /----\
       | O O|   ?
       \____/`
+
+		if m.Explanation == "" && m.Suggestion == "" {
+			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
+			if m.ContextInfo != "" {
+				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
+			}
+			s.WriteString("\n")
 
 			if m.AnimationFrame%2 == 0 {
 				s.WriteString(frame1)
 			} else {
 				s.WriteString(frame2)
 			}
-			s.WriteString(fmt.Sprintf("\n\nThinking about: %s...", m.Question))
-			if m.ContextInfo != "" {
-				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
-			}
 		} else {
-			s.WriteString("Explaining...")
+			s.WriteString("Explaining...\n")
+			if m.AnimationFrame%2 == 0 {
+				s.WriteString(frame1)
+			} else {
+				s.WriteString(frame2)
+			}
 		}
 
 	case StateSuccessAnim:
@@ -673,14 +768,29 @@ func (m Model) View() string {
        /----\ 
     !! |O  O| !!
        \____/`
+		s.WriteString(fmt.Sprintf("Thinking about: %s...\n", m.Question))
 		s.WriteString(foundFrame)
-		s.WriteString(fmt.Sprintf("\n\nThinking about: %s...", m.Question))
 
 	case StateSuggestion:
 		s.WriteString(TitleStyle.Render("Suggestion:"))
 		s.WriteString("\n")
 
 		s.WriteString(m.viewport.View())
+
+		// Scroll Indicators
+		var hints []string
+		if !m.viewport.AtTop() {
+			hints = append(hints, "↑ More above")
+		}
+		if !m.viewport.AtBottom() {
+			hints = append(hints, "↓ More below")
+		}
+
+		if len(hints) > 0 {
+			s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("\n(" + strings.Join(hints, " | ") + ")"))
+		} else {
+			s.WriteString("\n")
+		}
 
 		s.WriteString("\n")
 		// Render Options Horizontally
@@ -693,7 +803,7 @@ func (m Model) View() string {
 			options = append(options, style.Render(opt))
 		}
 		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, options...))
-		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (<-/-> to select, Enter to confirm)"))
+		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (<-/-> select, Enter confirm, Arrows scroll)"))
 
 	case StateExplained:
 		s.WriteString(TitleStyle.Render("Explanation:"))
@@ -755,7 +865,14 @@ func getMatches(pattern string) ([]string, error) {
 	// But let's support directory traversal hints (add / if dir)
 
 	var processed []string
-	processed = append(processed, matches...)
+	for _, m := range matches {
+		info, err := os.Stat(m)
+		if err == nil && info.IsDir() {
+			processed = append(processed, m+string(os.PathSeparator))
+		} else {
+			processed = append(processed, m)
+		}
+	}
 
 	return processed, nil
 }
