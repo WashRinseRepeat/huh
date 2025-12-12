@@ -28,18 +28,18 @@ const (
 )
 
 type Model struct {
-	State          State
-	PreviousState  State // To return after file prompt
-	Question       string
-	Input          textinput.Model
-	ContextInfo    string // Display string (e.g. "Attached: foo.txt")
-	ContextContent string // Actual content
-	Suggestion     string
-	RunnableCommands []string // Extracted commands for execution/copy
-	ActiveCommandIndex int    // Which command is currently selected
-	Explanation    string
-	Err          error
-	
+	State              State
+	PreviousState      State // To return after file prompt
+	Question           string
+	Input              textinput.Model
+	ContextInfo        string // Display string (e.g. "Attached: foo.txt")
+	ContextContent     string // Actual content
+	Suggestion         string
+	RunnableCommands   []string // Extracted commands for execution/copy
+	ActiveCommandIndex int      // Which command is currently selected
+	Explanation        string
+	Err                error
+
 	// Query
 	QueryFunc   func(string, string) (string, error)
 	ExplainFunc func(string, string) (string, error)
@@ -65,7 +65,7 @@ type Model struct {
 func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
 	initialState := StateLoading
 	ti := textinput.New()
-	
+
 	if question == "" {
 		initialState = StateInput
 		ti.Placeholder = "example: how do I check disk space?"
@@ -78,7 +78,7 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 		Input:          ti,
 		ContextInfo:    contextInfo,
 		ContextContent: contextContent,
-		Options:        []string{"Copy", "Explain", "Edit", "Cancel"},
+		Options:        []string{"Copy", "Explain", "Refine", "Cancel"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
 		ExplainFunc:    explainFunc,
@@ -120,7 +120,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Width = msg.Width
 			m.maxHeight = msg.Height - verticalMarginHeight
 		}
-		
+
 		// Re-render content with new width
 		m.updateViewportContent()
 
@@ -128,12 +128,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Suggestion = string(msg)
 		m.Explanation = "" // Clear previous if any
 		m.State = StateSuggestion
-		
+
 		// Parse Markdown Code Blocks
 		// Use regex to find all code blocks
 		re := regexp.MustCompile("(?s)```(.*?)```")
 		matches := re.FindAllStringSubmatch(m.Suggestion, -1)
-		
+
 		m.RunnableCommands = nil
 		if len(matches) > 0 {
 			for _, match := range matches {
@@ -231,9 +231,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Submit Input
 				refinement := m.Input.Value()
 				if refinement != "" {
+					m.Question = refinement // Update question to reflect new query in UI
+
+					// Capture current suggestion for refinement logic
+					currentSuggestion := m.Suggestion
+					// Clear suggestion in model so View() shows "Thinking about..." instead of "Explaining..."
+					m.Suggestion = ""
+
 					m.State = StateLoading
 					return m, func() tea.Msg {
-						res, err := m.RefineFunc(m.Suggestion, refinement, m.ContextContent)
+						res, err := m.RefineFunc(currentSuggestion, refinement, m.ContextContent)
 						if err != nil {
 							return ErrorMsg(err)
 						}
@@ -258,7 +265,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if input == "" {
 					input = "" // Keep empty to match * in getMatches
 				}
-				
+
 				// New completion query
 				if m.Matches == nil {
 					matches, err := getMatches(input)
@@ -271,12 +278,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 				}
-				
+
 				// Cycle matches
 				if len(m.Matches) > 0 {
 					// Increment FIRST, then set
 					m.MatchIndex = (m.MatchIndex + 1) % len(m.Matches)
-					
+
 					current := m.Matches[m.MatchIndex]
 					m.Input.SetValue(current)
 					m.Input.SetCursor(len(m.Input.Value()))
@@ -292,7 +299,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Do nothing on directories (require explicit / to drill)
 						return m, nil
 					}
-					
+
 					// Read file
 					b, err := os.ReadFile(path)
 					if err != nil {
@@ -300,7 +307,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.State = StateError
 						return m, nil
 					}
-					
+
 					// Append context
 					m.ContextContent += fmt.Sprintf("\n--- File: %s ---\n%s\n", path, string(b))
 					if m.ContextInfo == "" {
@@ -308,7 +315,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.ContextInfo += ", " + path
 					}
-					
+
 					// Return to previous state
 					m.State = m.PreviousState
 					m.Input.SetValue("") // Clear input for question/refinement
@@ -390,7 +397,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	
 	// Handle viewport updates
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
@@ -428,7 +434,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 			}
 			return ExplanationMsg(exp)
 		}
-	case "Edit":
+	case "Refine":
 		if len(m.RunnableCommands) == 0 {
 			m.Err = fmt.Errorf("no command to edit")
 			m.State = StateError
@@ -448,7 +454,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 
 func (m *Model) updateViewportContent() {
 	var content strings.Builder
-	
+
 	// Create a wrapper style for wrapping text
 	// Ensure we reserve some padding if needed, but viewport width is usually sufficient
 	// wrapper := lipgloss.NewStyle().Width(m.viewport.Width)
@@ -466,8 +472,8 @@ func (m *Model) updateViewportContent() {
 						if cmdIndex == m.ActiveCommandIndex {
 							style = CommandStyle
 						}
-						// Commands are usually short, but let's wrap just in case or truncation? 
-						// Code blocks usually scroll horizontally or wrap poorly. 
+						// Commands are usually short, but let's wrap just in case or truncation?
+						// Code blocks usually scroll horizontally or wrap poorly.
 						// Let's assume commands fit or soft wrap naturally.
 						content.WriteString(style.Render(cmdVal))
 						cmdIndex++
@@ -481,7 +487,7 @@ func (m *Model) updateViewportContent() {
 		} else {
 			content.WriteString(wordwrap.String(m.Suggestion, m.viewport.Width))
 		}
-		
+
 		content.WriteString("\n")
 		if len(m.RunnableCommands) > 1 {
 			content.WriteString(wordwrap.String(lipgloss.NewStyle().Foreground(subtleColor).Render("(Tab to cycle commands)"), m.viewport.Width))
@@ -492,14 +498,14 @@ func (m *Model) updateViewportContent() {
 		content.WriteString(wordwrap.String(DescriptionStyle.Render(m.Explanation), m.viewport.Width))
 		content.WriteString(wordwrap.String("\n(Press Esc to back)", m.viewport.Width))
 	}
-	
+
 	str := content.String()
 	m.viewport.SetContent(str)
-	
+
 	// Dynamic Height Adjustment
 	// Count lines in the rendered content
 	lineCount := lipgloss.Height(str)
-	
+
 	if lineCount < m.maxHeight {
 		m.viewport.Height = lineCount
 	} else {
@@ -520,7 +526,7 @@ func (m Model) View() string {
 			s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render(fmt.Sprintf("\n(Context: %s)", m.ContextInfo)))
 		}
 		s.WriteString("\n\n")
-		
+
 		// Input View
 		s.WriteString(m.Input.View())
 		s.WriteString("\n\n")
@@ -531,7 +537,7 @@ func (m Model) View() string {
 			btnStyle = SelectedItemStyle
 		}
 		s.WriteString(btnStyle.Render("[ Attach File ]"))
-		
+
 		s.WriteString("\n\n(Tab to select, Enter to confirm, Esc to quit)")
 
 	case StateRefining:
@@ -539,7 +545,7 @@ func (m Model) View() string {
 		s.WriteString("\n\n")
 		s.WriteString(lipgloss.NewStyle().Foreground(secondaryColor).Render(m.Suggestion))
 		s.WriteString("\n\n")
-		
+
 		// Input View
 		s.WriteString(m.Input.View())
 		s.WriteString("\n\n")
@@ -564,7 +570,7 @@ func (m Model) View() string {
 			s.WriteString("\n\n")
 			s.WriteString(TitleStyle.Render("Suggestions:"))
 			s.WriteString("\n")
-			
+
 			// Limit to 5 matches for cleaner UI
 			start := 0
 			end := len(m.Matches)
@@ -573,7 +579,7 @@ func (m Model) View() string {
 				if m.MatchIndex >= 5 {
 					start = m.MatchIndex - 4
 				}
-				if start + 5 < end {
+				if start+5 < end {
 					end = start + 5
 				}
 			}
@@ -589,7 +595,7 @@ func (m Model) View() string {
 				// Show relative path or just basename? Full path is clearer for now.
 				s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, match)) + "\n")
 			}
-			
+
 			if len(m.Matches) > 5 {
 				s.WriteString(ItemStyle.Render("..."))
 			}
@@ -604,13 +610,13 @@ func (m Model) View() string {
 				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
 			}
 		}
-	
+
 	case StateSuggestion:
 		s.WriteString(TitleStyle.Render("Suggestion:"))
 		s.WriteString("\n")
-		
+
 		s.WriteString(m.viewport.View())
-		
+
 		s.WriteString("\n")
 		// Render Options Horizontally
 		var options []string
@@ -627,7 +633,7 @@ func (m Model) View() string {
 	case StateExplained:
 		s.WriteString(TitleStyle.Render("Explanation:"))
 		s.WriteString("\n")
-		
+
 		s.WriteString(m.viewport.View())
 
 	case StateError:
@@ -657,22 +663,22 @@ func getMatches(pattern string) ([]string, error) {
 			pattern = filepath.Join(home, pattern[1:])
 		}
 	}
-	
+
 	// Add * for prefix matching
 	search := pattern + "*"
 	matches, err := filepath.Glob(search)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Filter out hidden files unless pattern starts with .
 	// Actually Glob handles standard logic.
 	// But let's support directory traversal hints (add / if dir)
-	
+
 	var processed []string
 	for _, m := range matches {
 		processed = append(processed, m)
 	}
-	
+
 	return processed, nil
 }
