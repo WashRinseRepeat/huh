@@ -308,31 +308,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case StateFilePrompt:
 			switch msg.String() {
-			case "tab", "shift+tab", "up", "down":
-				// Auto-complete logic
-				input := m.Input.Value()
-				if input == "" {
-					input = "" // Keep empty to match * in getMatches
-				}
-
-				// New completion query
-				if m.Matches == nil {
-					matches, err := getMatches(input)
-					if err == nil && len(matches) > 0 {
-						m.Matches = matches
-						m.MatchIndex = 0
-						// Set initial match immediately
-						m.Input.SetValue(m.Matches[0])
-						m.Input.SetCursor(len(m.Input.Value()))
-						return m, nil
-					}
-				}
-
+			case "up", "down":
 				// Cycle matches
 				if len(m.Matches) > 0 {
 					direction := 1
-					key := msg.String()
-					if key == "shift+tab" || key == "up" {
+					if msg.String() == "up" {
 						direction = -1
 					}
 
@@ -347,6 +327,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					current := m.Matches[m.MatchIndex]
 					m.Input.SetValue(current)
 					m.Input.SetCursor(len(m.Input.Value()))
+				}
+				return m, nil
+
+			case "tab":
+				// If we have suggestions, select the current one first (Drill down)
+				if len(m.Matches) > 0 {
+					m.Input.SetValue(m.Matches[m.MatchIndex])
+					m.Input.SetCursor(len(m.Input.Value()))
+				}
+
+				// Refresh / Drill down
+				m.Matches = nil // Force refresh
+				input := m.Input.Value()
+				if input == "" {
+					input = ""
+				}
+
+				matches, err := getMatches(input)
+				if err == nil && len(matches) > 0 {
+					m.Matches = matches
+					m.MatchIndex = 0
+
+					// Only auto-complete if single match
+					if len(matches) == 1 {
+						m.Input.SetValue(m.Matches[0])
+						m.Input.SetCursor(len(m.Input.Value()))
+					}
 				}
 				return m, nil
 

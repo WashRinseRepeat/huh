@@ -42,5 +42,6 @@ var (
 			PaddingLeft(2)
 
 	DirectoryStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("33")) // Blueish
+			Foreground(lipgloss.Color("33")). // Blueish
+			PaddingLeft(2)
 )
