@@ -235,6 +235,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Capture current suggestion for refinement logic
 					currentSuggestion := m.Suggestion
+					if len(m.RunnableCommands) > 0 {
+						currentSuggestion = m.RunnableCommands[m.ActiveCommandIndex]
+					}
 					// Clear suggestion in model so View() shows "Thinking about..." instead of "Explaining..."
 					m.Suggestion = ""
 
