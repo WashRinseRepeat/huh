@@ -365,13 +365,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.SelectedOption++
 				}
 			case "up", "k":
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 			case "down", "j":
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 			case "pgup", "ctrl+u":
-				m.viewport.LineUp(m.viewport.Height / 2)
+				m.viewport.ScrollUp(m.viewport.Height / 2)
 			case "pgdown", "ctrl+d":
-				m.viewport.LineDown(m.viewport.Height / 2)
+				m.viewport.ScrollDown(m.viewport.Height / 2)
 			case "enter":
 				// If at bottom and scrolling down, maybe Enter on simple text does nothing?
 				// But Enter triggers selection.
@@ -382,13 +382,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "q":
 				m.State = StateSuggestion // Go back
 			case "up", "k":
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 			case "down", "j":
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 			case "pgup", "ctrl+u", "shift+up":
-				m.viewport.LineUp(m.viewport.Height / 2)
+				m.viewport.ScrollUp(m.viewport.Height / 2)
 			case "pgdown", "ctrl+d", "shift+down":
-				m.viewport.LineDown(m.viewport.Height / 2)
+				m.viewport.ScrollDown(m.viewport.Height / 2)
 			}
 		case StateError:
 			if msg.String() == "q" || msg.String() == "ctrl+c" {
@@ -676,9 +676,7 @@ func getMatches(pattern string) ([]string, error) {
 	// But let's support directory traversal hints (add / if dir)
 
 	var processed []string
-	for _, m := range matches {
-		processed = append(processed, m)
-	}
+	processed = append(processed, matches...)
 
 	return processed, nil
 }
