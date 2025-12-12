@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -28,6 +29,7 @@ const (
 	StateSuggestion
 	StateExplained
 	StateError
+	StatePermissionDenied
 )
 
 type CommandLayout struct {
@@ -42,6 +44,7 @@ type Model struct {
 	Input              textinput.Model
 	ContextInfo        string // Display string (e.g. "Attached: foo.txt")
 	ContextContent     string // Actual content
+	PermissionPath     string // Path that failed permission check
 	Suggestion         string
 	PendingSuggestion  string   // Holds suggestion during success animation
 	RunnableCommands   []string // Extracted commands for execution/copy
@@ -370,6 +373,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Read file
 					b, err := os.ReadFile(path)
 					if err != nil {
+						if os.IsPermission(err) {
+							m.PermissionPath = path
+							m.State = StatePermissionDenied
+							return m, nil
+						}
 						m.Err = fmt.Errorf("read error: %v", err)
 						m.State = StateError
 						return m, nil
@@ -407,7 +415,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			// Reset completion if user types
 			if msg.String() != "tab" {
-				m.Matches = nil
+				// Live update of matches
+				newMatches, err := getMatches(m.Input.Value())
+				// Only update if no error (e.g. invalid path)
+				if err == nil {
+					m.Matches = newMatches
+					// Reset index if matches changed
+					m.MatchIndex = 0
+				} else {
+					m.Matches = nil
+				}
 			}
 			m.Input, cmd = m.Input.Update(msg)
 			return m, cmd
@@ -471,7 +488,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "q" || msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
+
+		case StatePermissionDenied:
+			switch msg.String() {
+			case "y", "Y":
+				// Run sudo cat
+				return m, sudoRead(m.PermissionPath)
+			case "n", "N", "esc":
+				m.State = StateFilePrompt
+				m.PermissionPath = ""
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
 		}
+	}
+
+	switch msg := msg.(type) {
+	case SudoReadMsg:
+		if msg.Err != nil {
+			m.Err = fmt.Errorf("sudo failed: %v", msg.Err)
+			m.State = StateError
+			return m, nil
+		}
+
+		// Read temp file
+		b, err := os.ReadFile(msg.ContentPath)
+		// Clean up
+		os.Remove(msg.ContentPath)
+
+		if err != nil {
+			m.Err = fmt.Errorf("read temp error: %v", err)
+			m.State = StateError
+			return m, nil
+		}
+
+		// Success - append content
+		m.ContextContent += fmt.Sprintf("\n--- File: %s ---\n%s\n", m.PermissionPath, string(b))
+		if m.ContextInfo == "" {
+			m.ContextInfo = m.PermissionPath
+		} else {
+			m.ContextInfo += ", " + m.PermissionPath
+		}
+
+		// Return to previous state
+		m.State = m.PreviousState
+		m.Input.SetValue("")
+
+		// Restore placeholder
+		if m.State == StateRefining {
+			m.Input.Placeholder = "Your follow-up question here..."
+		} else {
+			m.Input.Placeholder = "e.g. how do I check disk space?"
+		}
+
+		m.FocusIndex = 0
+		m.Input.Focus()
+		return m, nil
 	}
 
 	// Handle viewport updates
@@ -823,6 +896,11 @@ func (m Model) View() string {
 		s.WriteString("\n")
 		s.WriteString(fmt.Sprintf("%v", m.Err))
 		s.WriteString("\n\n(Press q to quit)")
+
+	case StatePermissionDenied:
+		s.WriteString(TitleStyle.Foreground(errorColor).Render("Permission Denied"))
+		s.WriteString("\n\n")
+		s.WriteString(fmt.Sprintf("Could not read '%s'.\nTry reading with sudo? (y/n)", m.PermissionPath))
 	}
 
 	return lipgloss.NewStyle().Margin(1, 1).Render(s.String())
@@ -838,6 +916,11 @@ type ExplanationMsg string
 type ErrorMsg error
 type TickMsg time.Time
 type SuccessTimeoutMsg time.Time
+
+type SudoReadMsg struct {
+	Err         error
+	ContentPath string
+}
 
 func tick() tea.Cmd {
 	return tea.Tick(time.Millisecond*750, func(t time.Time) tea.Msg {
@@ -860,26 +943,60 @@ func getMatches(pattern string) ([]string, error) {
 		}
 	}
 
-	// Add * for prefix matching
-	search := pattern + "*"
-	matches, err := filepath.Glob(search)
+	dir, file := filepath.Split(pattern)
+	if dir == "" {
+		dir = "."
+	}
+
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter out hidden files unless pattern starts with .
-	// Actually Glob handles standard logic.
-	// But let's support directory traversal hints (add / if dir)
+	var matches []string
+	for _, e := range entries {
+		name := e.Name()
+		// Skip hidden files unless typed explicitly?
+		// User said "looks for typed string anywhere".
+		// Usually hidden files are skipped unless pattern starts with .
+		if strings.HasPrefix(name, ".") && !strings.HasPrefix(file, ".") {
+			continue
+		}
 
-	var processed []string
-	for _, m := range matches {
-		info, err := os.Stat(m)
-		if err == nil && info.IsDir() {
-			processed = append(processed, m+string(os.PathSeparator))
-		} else {
-			processed = append(processed, m)
+		if strings.Contains(strings.ToLower(name), strings.ToLower(file)) {
+			fullPath := filepath.Join(dir, name)
+			if e.IsDir() {
+				fullPath += string(os.PathSeparator)
+			}
+			matches = append(matches, fullPath)
 		}
 	}
 
-	return processed, nil
+	return matches, nil
+}
+
+func sudoRead(path string) tea.Cmd {
+	return func() tea.Msg {
+		// Create temp file
+		f, err := os.CreateTemp("", "huh-sudo-*")
+		if err != nil {
+			return SudoReadMsg{Err: err}
+		}
+		f.Close()
+
+		// Use sh to capture output
+		// sudo cat <path> > <temp>
+		// We use sh -c to allow IO redirection
+		cmdStr := fmt.Sprintf("sudo cat %q > %q", path, f.Name())
+		c := exec.Command("sh", "-c", cmdStr)
+
+		// Connect stderr to capture sudo prompt
+		c.Stderr = os.Stderr
+		c.Stdout = os.Stderr // Just in case, but usually cat output goes to file
+		c.Stdin = os.Stdin
+
+		return tea.ExecProcess(c, func(err error) tea.Msg {
+			return SudoReadMsg{Err: err, ContentPath: f.Name()}
+		})()
+	}
 }
