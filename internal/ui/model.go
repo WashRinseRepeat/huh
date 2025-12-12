@@ -72,10 +72,11 @@ type Model struct {
 func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
 	initialState := StateLoading
 	ti := textinput.New()
+	ti.Width = 50
 
 	if question == "" {
 		initialState = StateInput
-		ti.Placeholder = "example: how do I check disk space?"
+		ti.Placeholder = "e.g. how do I check disk space?"
 		ti.Focus()
 	}
 
@@ -133,8 +134,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
+			m.viewport.Width = msg.Width
 			m.maxHeight = msg.Height - verticalMarginHeight
 		}
+
+		m.Input.Width = msg.Width - 4
 
 		// Re-render content with new width
 		m.updateViewportContent()
@@ -479,7 +483,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 		}
 		m.State = StateRefining
 		m.Input.SetValue("") // Should we pre-fill? Probably not per previous logic.
-		m.Input.Placeholder = "example: how do I check disk space?"
+		m.Input.Placeholder = "Your follow-up question here..."
 		m.Input.Focus()
 		return m, textinput.Blink
 
