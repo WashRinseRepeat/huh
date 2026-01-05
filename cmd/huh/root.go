@@ -16,9 +16,11 @@ import (
 )
 
 var files []string
+var showConfigLocation bool
 
 func init() {
 	rootCmd.Flags().StringSliceVarP(&files, "file", "f", []string{}, "file(s) to attach")
+	rootCmd.Flags().BoolVarP(&showConfigLocation, "config-location", "c", false, "show the location of the config file")
 }
 
 var rootCmd = &cobra.Command{
@@ -27,8 +29,18 @@ var rootCmd = &cobra.Command{
 	Long:  `huh translates natural language questions into terminal commands.`,
 	Args:  cobra.MaximumNArgs(100), // Allow any number, we join them. If 0, we enter interactive.
 	Run: func(cmd *cobra.Command, args []string) {
+		if showConfigLocation {
+			path, err := config.GetConfigLocation()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println(path)
+			return
+		}
+
 		question := strings.Join(args, " ")
-		
+
 		// 1. Gather Context
 		sysCtx := usercontext.GetContext()
 
