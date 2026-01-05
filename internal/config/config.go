@@ -27,13 +27,15 @@ type Config struct {
 var AppConfig Config
 
 func Init() {
-	configDir, err := os.UserConfigDir()
+	configPath, err := GetConfigLocation()
+	huhDir := ""
 	if err != nil {
-		fmt.Printf("Error getting user config dir: %v\n", err)
-		configDir = "."
+		fmt.Printf("Error getting config location: %v\n", err)
+		huhDir = "huh"
+		configPath = filepath.Join(huhDir, "config.yaml")
+	} else {
+		huhDir = filepath.Dir(configPath)
 	}
-	huhDir := filepath.Join(configDir, "huh")
-	configPath := filepath.Join(huhDir, "config.yaml")
 
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -74,4 +76,13 @@ func createDefaultConfig(path string) {
 		return
 	}
 	fmt.Printf("Created default config file at %s\n", path)
+}
+
+func GetConfigLocation() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("error getting user config dir: %w", err)
+	}
+	huhDir := filepath.Join(configDir, "huh")
+	return filepath.Join(huhDir, "config.yaml"), nil
 }
