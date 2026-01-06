@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,7 +54,7 @@ type Model struct {
 	Err                error
 
 	// Animation
-	Spinner spinner.Model
+	AnimationFrame int
 
 	// Query
 	QueryFunc   func(string, string) (string, error)
@@ -93,17 +92,12 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 		ti.Focus()
 	}
 
-	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(primaryColor)
-
 	return Model{
 		State:          initialState,
 		Question:       question,
 		Input:          ti,
 		ContextInfo:    contextInfo,
 		ContextContent: contextContent,
-		Spinner:        s,
 		Options:        []string{"Copy", "Explain", "Refine", "Cancel"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
@@ -127,7 +121,7 @@ func (m Model) Init() tea.Cmd {
 				}
 				return SuggestionMsg(res)
 			},
-			m.Spinner.Tick,
+			tick(),
 		)
 	}
 	return tea.Batch(cmds...)
@@ -161,11 +155,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-render content with new width
 		m.updateViewportContent()
 
-	case spinner.TickMsg:
+	case TickMsg:
 		if m.State == StateLoading {
-			var cmd tea.Cmd
-			m.Spinner, cmd = m.Spinner.Update(msg)
-			return m, cmd
+			m.AnimationFrame++
+			return m, tick()
 		}
 
 	case CopiedTimeoutMsg:
@@ -253,7 +246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 							return SuggestionMsg(res)
 						},
-						m.Spinner.Tick,
+						tick(),
 					)
 				}
 			case "ctrl+c", "esc":
@@ -307,7 +300,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 							return SuggestionMsg(res)
 						},
-						m.Spinner.Tick,
+						tick(),
 					)
 				}
 			case "esc":
@@ -823,23 +816,72 @@ func (m Model) View() string {
 		}
 
 	case StateLoading:
+		// Improved Robot Animation
+		// Frames: Center, Left, Right, Blink
+		eyeColor := primaryColor
+		if m.Explanation != "" {
+			eyeColor = secondaryColor // Green eyes when explaining/found
+		}
+
+		eyeStyle := lipgloss.NewStyle().Foreground(eyeColor).Bold(true)
+		bodyStyle := lipgloss.NewStyle().Foreground(subtleColor)
+
+		// Base parts
+		top := bodyStyle.Render("      /----\\")
+		bot := bodyStyle.Render("      \\____/")
+
+		// Dynamic parts
+		var eyes string
+
+		// 4-frame cycle
+		step := m.AnimationFrame % 4
+		switch step {
+		case 0: // Center
+			eyes = fmt.Sprintf("|%s  %s|", eyeStyle.Render("O"), eyeStyle.Render("O"))
+		case 1: // Look Left
+			eyes = fmt.Sprintf("|%s   |", eyeStyle.Render("O"))
+		case 2: // Look Right
+			eyes = fmt.Sprintf("|   %s|", eyeStyle.Render("O"))
+		case 3: // Blink
+			eyes = fmt.Sprintf("|%s  %s|", eyeStyle.Render("-"), eyeStyle.Render("-"))
+		}
+
+		// Add antenna bobbing
+		antenna := " "
+		if step%2 == 0 {
+			antenna = bodyStyle.Render("        |")
+		} else {
+			antenna = bodyStyle.Render("       \\|/") // Wiggle
+		}
+
+		robot := fmt.Sprintf("%s\n%s\n      %s\n%s", antenna, top, eyes, bot)
+
 		if m.Explanation == "" && m.Suggestion == "" {
-			s.WriteString(fmt.Sprintf("%s Thinking about: %s...", m.Spinner.View(), m.Question))
+			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
 			if m.ContextInfo != "" {
 				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
 			}
 			s.WriteString("\n")
+			s.WriteString(robot)
 		} else {
-			s.WriteString(fmt.Sprintf("%s Explaining...", m.Spinner.View()))
+			s.WriteString("Explaining...\n")
+			s.WriteString(robot)
 		}
 
 	case StateSuccessAnim:
-		foundFrame := `
-       /----\ 
-    !! |O  O| !!
-       \____/`
+		// Success Robot
+		eyeStyle := lipgloss.NewStyle().Foreground(secondaryColor).Bold(true)
+		bodyStyle := lipgloss.NewStyle().Foreground(subtleColor)
+
+		top := bodyStyle.Render("       /----\\")
+		bot := bodyStyle.Render("       \\____/")
+		eyes := fmt.Sprintf("|%s  %s|", eyeStyle.Render("^"), eyeStyle.Render("^"))
+		sparkles := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("    !!        !!")
+
+		robot := fmt.Sprintf("%s\n%s \n       %s\n%s", sparkles, top, eyes, bot)
+
 		s.WriteString(fmt.Sprintf("Thinking about: %s...\n", m.Question))
-		s.WriteString(foundFrame)
+		s.WriteString(robot)
 
 	case StateSuggestion:
 		s.WriteString(TitleStyle.Render("Suggestion:"))
@@ -910,12 +952,19 @@ func SetSuggestion(cmd string) tea.Msg {
 type SuggestionMsg string
 type ExplanationMsg string
 type ErrorMsg error
+type TickMsg time.Time
 type SuccessTimeoutMsg time.Time
 type CopiedTimeoutMsg time.Time
 
 type SudoReadMsg struct {
 	Err         error
 	ContentPath string
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Millisecond*200, func(t time.Time) tea.Msg {
+		return TickMsg(t)
+	})
 }
 
 func waitForSuccess() tea.Cmd {
