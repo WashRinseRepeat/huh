@@ -30,6 +30,7 @@ const (
 	StateExplained
 	StateError
 	StatePermissionDenied
+	StateCopied
 )
 
 type CommandLayout struct {
@@ -159,6 +160,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.AnimationFrame++
 			return m, tick()
 		}
+
+	case CopiedTimeoutMsg:
+		return m, tea.Quit
 
 	case SuggestionMsg:
 		// Transition to Success Animation
@@ -570,7 +574,8 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 			m.State = StateError
 			return m, nil
 		}
-		return m, tea.Quit
+		m.State = StateCopied
+		return m, waitForCopy()
 	case "Explain":
 		m.State = StateLoading // Show loading while explaining
 		return m, func() tea.Msg {
@@ -901,6 +906,12 @@ func (m Model) View() string {
 		s.WriteString(TitleStyle.Foreground(errorColor).Render("Permission Denied"))
 		s.WriteString("\n\n")
 		s.WriteString(fmt.Sprintf("Could not read '%s'.\nTry reading with sudo? (y/n)", m.PermissionPath))
+
+	case StateCopied:
+		s.WriteString("\n")
+		s.WriteString(TitleStyle.Copy().Foreground(secondaryColor).Render("  ✓ Copied to clipboard!"))
+		s.WriteString("\n\n")
+		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (Quitting...)"))
 	}
 
 	return lipgloss.NewStyle().Margin(1, 1).Render(s.String())
@@ -916,6 +927,7 @@ type ExplanationMsg string
 type ErrorMsg error
 type TickMsg time.Time
 type SuccessTimeoutMsg time.Time
+type CopiedTimeoutMsg time.Time
 
 type SudoReadMsg struct {
 	Err         error
@@ -931,6 +943,12 @@ func tick() tea.Cmd {
 func waitForSuccess() tea.Cmd {
 	return tea.Tick(time.Millisecond*250, func(t time.Time) tea.Msg {
 		return SuccessTimeoutMsg(t)
+	})
+}
+
+func waitForCopy() tea.Cmd {
+	return tea.Tick(time.Millisecond*800, func(t time.Time) tea.Msg {
+		return CopiedTimeoutMsg(t)
 	})
 }
 
