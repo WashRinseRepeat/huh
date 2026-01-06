@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,7 +55,7 @@ type Model struct {
 	Err                error
 
 	// Animation
-	AnimationFrame int
+	Spinner spinner.Model
 
 	// Query
 	QueryFunc   func(string, string) (string, error)
@@ -92,12 +93,17 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 		ti.Focus()
 	}
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(primaryColor)
+
 	return Model{
 		State:          initialState,
 		Question:       question,
 		Input:          ti,
 		ContextInfo:    contextInfo,
 		ContextContent: contextContent,
+		Spinner:        s,
 		Options:        []string{"Copy", "Explain", "Refine", "Cancel"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
@@ -121,7 +127,7 @@ func (m Model) Init() tea.Cmd {
 				}
 				return SuggestionMsg(res)
 			},
-			tick(),
+			m.Spinner.Tick,
 		)
 	}
 	return tea.Batch(cmds...)
@@ -155,10 +161,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-render content with new width
 		m.updateViewportContent()
 
-	case TickMsg:
+	case spinner.TickMsg:
 		if m.State == StateLoading {
-			m.AnimationFrame++
-			return m, tick()
+			var cmd tea.Cmd
+			m.Spinner, cmd = m.Spinner.Update(msg)
+			return m, cmd
 		}
 
 	case CopiedTimeoutMsg:
@@ -246,7 +253,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 							return SuggestionMsg(res)
 						},
-						tick(),
+						m.Spinner.Tick,
 					)
 				}
 			case "ctrl+c", "esc":
@@ -300,7 +307,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 							return SuggestionMsg(res)
 						},
-						tick(),
+						m.Spinner.Tick,
 					)
 				}
 			case "esc":
@@ -816,36 +823,14 @@ func (m Model) View() string {
 		}
 
 	case StateLoading:
-		// Robot Animation
-		frame1 := `
-      /----\
-  ?   |O O |
-      \____/`
-
-		frame2 := `
-      /----\
-      | O O|   ?
-      \____/`
-
 		if m.Explanation == "" && m.Suggestion == "" {
-			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
+			s.WriteString(fmt.Sprintf("%s Thinking about: %s...", m.Spinner.View(), m.Question))
 			if m.ContextInfo != "" {
 				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
 			}
 			s.WriteString("\n")
-
-			if m.AnimationFrame%2 == 0 {
-				s.WriteString(frame1)
-			} else {
-				s.WriteString(frame2)
-			}
 		} else {
-			s.WriteString("Explaining...\n")
-			if m.AnimationFrame%2 == 0 {
-				s.WriteString(frame1)
-			} else {
-				s.WriteString(frame2)
-			}
+			s.WriteString(fmt.Sprintf("%s Explaining...", m.Spinner.View()))
 		}
 
 	case StateSuccessAnim:
@@ -925,19 +910,12 @@ func SetSuggestion(cmd string) tea.Msg {
 type SuggestionMsg string
 type ExplanationMsg string
 type ErrorMsg error
-type TickMsg time.Time
 type SuccessTimeoutMsg time.Time
 type CopiedTimeoutMsg time.Time
 
 type SudoReadMsg struct {
 	Err         error
 	ContentPath string
-}
-
-func tick() tea.Cmd {
-	return tea.Tick(time.Millisecond*750, func(t time.Time) tea.Msg {
-		return TickMsg(t)
-	})
 }
 
 func waitForSuccess() tea.Cmd {
