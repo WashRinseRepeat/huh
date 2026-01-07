@@ -60,6 +60,7 @@ type Model struct {
 	QueryFunc   func(string, string) (string, error)
 	ExplainFunc func(string, string) (string, error)
 	RefineFunc  func(string, string, string) (string, error)
+	CopyFunc    func(string) error
 
 	// Menu
 	Options        []string
@@ -103,6 +104,7 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 		QueryFunc:      queryFunc,
 		ExplainFunc:    explainFunc,
 		RefineFunc:     refineFunc,
+		CopyFunc:       clipboard.WriteAll,
 	}
 }
 
@@ -474,6 +476,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// If at bottom and scrolling down, maybe Enter on simple text does nothing?
 				// But Enter triggers selection.
 				return m.handleSelection()
+			case "c":
+				return m.performCopy()
 			}
 		case StateExplained:
 			switch msg.String() {
@@ -562,20 +566,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 	selected := m.Options[m.SelectedOption]
 	switch selected {
 	case "Copy":
-		if len(m.RunnableCommands) == 0 {
-			m.Err = fmt.Errorf("no executable command found to copy")
-			m.State = StateError
-			return m, nil
-		}
-		// Copy Active Command
-		cmd := m.RunnableCommands[m.ActiveCommandIndex]
-		if err := clipboard.WriteAll(cmd); err != nil {
-			m.Err = fmt.Errorf("failed to copy: %v (install wl-clipboard or xclip)", err)
-			m.State = StateError
-			return m, nil
-		}
-		m.State = StateCopied
-		return m, waitForCopy()
+		return m.performCopy()
 	case "Explain":
 		m.State = StateLoading // Show loading while explaining
 		return m, func() tea.Msg {
@@ -1017,4 +1008,21 @@ func sudoRead(path string) tea.Cmd {
 			return SudoReadMsg{Err: err, ContentPath: f.Name()}
 		})()
 	}
+}
+
+func (m Model) performCopy() (tea.Model, tea.Cmd) {
+	if len(m.RunnableCommands) == 0 {
+		m.Err = fmt.Errorf("no executable command found to copy")
+		m.State = StateError
+		return m, nil
+	}
+	// Copy Active Command
+	cmd := m.RunnableCommands[m.ActiveCommandIndex]
+	if err := m.CopyFunc(cmd); err != nil {
+		m.Err = fmt.Errorf("failed to copy: %v (install wl-clipboard or xclip)", err)
+		m.State = StateError
+		return m, nil
+	}
+	m.State = StateCopied
+	return m, waitForCopy()
 }
