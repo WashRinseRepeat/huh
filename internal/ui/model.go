@@ -478,6 +478,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.handleSelection()
 			case "c":
 				return m.performCopy()
+			case "e":
+				// Explain
+				m.SelectedOption = 1 // Update selection to match
+				m.State = StateLoading
+				return m, func() tea.Msg {
+					target := m.Suggestion
+					if len(m.RunnableCommands) > 0 {
+						target = m.RunnableCommands[m.ActiveCommandIndex]
+					}
+					exp, err := m.ExplainFunc(target, m.ContextContent)
+					if err != nil {
+						return ErrorMsg(err)
+					}
+					return ExplanationMsg(exp)
+				}
+			case "r":
+				// Refine
+				if len(m.RunnableCommands) == 0 {
+					m.Err = fmt.Errorf("no command to edit")
+					m.State = StateError
+					return m, nil
+				}
+				m.SelectedOption = 2 // Update selection to match
+				m.State = StateRefining
+				m.Input.SetValue("")
+				m.Input.Placeholder = "Your follow-up question here..."
+				m.Input.Focus()
+				return m, textinput.Blink
 			}
 		case StateExplained:
 			switch msg.String() {
@@ -876,7 +904,31 @@ func (m Model) View() string {
 			if m.SelectedOption == i {
 				style = SelectedItemStyle
 			}
-			options = append(options, style.Render(opt))
+
+			// Underline shortcut character
+			// "Copy" -> "C" is index 0
+			// "Explain" -> "E" is index 0
+			// "Refine" -> "R" is index 0
+			// "Cancel" -> "C", wait. Cancel is usually Q or Esc. But visually it says "Cancel".
+			// If we want consistent shortcuts, maybe "Quit" instead of "Cancel"?
+			// The user said "underline the letters that are used for shortcuts".
+			// Let's assume standard first letter unless conflict.
+			// Copy (C), Explain (E), Refine (R), Cancel (?).
+			// If Cancel is "q", then we can't underline C.
+			// Maybe change "Cancel" to "Quit"? Or just not underline it if it's Esc/q.
+			// But for C/E/R it's easy.
+
+			var label string
+			if opt == "Cancel" {
+				label = opt // No underline for Cancel (uses Esc/q)
+			} else {
+				// Underline first letter
+				first := opt[:1]
+				rest := opt[1:]
+				label = lipgloss.NewStyle().Underline(true).Render(first) + rest
+			}
+
+			options = append(options, style.Render(label))
 		}
 		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, options...))
 		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (<-/-> select, Enter confirm, Arrows scroll)"))
