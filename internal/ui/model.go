@@ -816,16 +816,45 @@ func (m Model) View() string {
 		}
 
 	case StateLoading:
-		// Robot Animation
-		frame1 := `
-      /----\
-  ?   |O O |
-      \____/`
+		// Improved Robot Animation
+		// Frames: Center, Left, Right, Blink
+		eyeColor := primaryColor
+		if m.Explanation != "" {
+			eyeColor = secondaryColor // Green eyes when explaining/found
+		}
 
-		frame2 := `
-      /----\
-      | O O|   ?
-      \____/`
+		eyeStyle := lipgloss.NewStyle().Foreground(eyeColor).Bold(true)
+		bodyStyle := lipgloss.NewStyle().Foreground(subtleColor)
+
+		// Base parts
+		top := bodyStyle.Render("      /----\\")
+		bot := bodyStyle.Render("      \\____/")
+
+		// Dynamic parts
+		var eyes string
+
+		// 4-frame cycle
+		step := m.AnimationFrame % 4
+		switch step {
+		case 0: // Center
+			eyes = fmt.Sprintf("|%s  %s|", eyeStyle.Render("O"), eyeStyle.Render("O"))
+		case 1: // Look Left
+			eyes = fmt.Sprintf("|%s   |", eyeStyle.Render("O"))
+		case 2: // Look Right
+			eyes = fmt.Sprintf("|   %s|", eyeStyle.Render("O"))
+		case 3: // Blink
+			eyes = fmt.Sprintf("|%s  %s|", eyeStyle.Render("-"), eyeStyle.Render("-"))
+		}
+
+		// Add antenna bobbing
+		antenna := " "
+		if step%2 == 0 {
+			antenna = bodyStyle.Render("        |")
+		} else {
+			antenna = bodyStyle.Render("       \\|/") // Wiggle
+		}
+
+		robot := fmt.Sprintf("%s\n%s\n      %s\n%s", antenna, top, eyes, bot)
 
 		if m.Explanation == "" && m.Suggestion == "" {
 			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
@@ -833,28 +862,26 @@ func (m Model) View() string {
 				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
 			}
 			s.WriteString("\n")
-
-			if m.AnimationFrame%2 == 0 {
-				s.WriteString(frame1)
-			} else {
-				s.WriteString(frame2)
-			}
+			s.WriteString(robot)
 		} else {
 			s.WriteString("Explaining...\n")
-			if m.AnimationFrame%2 == 0 {
-				s.WriteString(frame1)
-			} else {
-				s.WriteString(frame2)
-			}
+			s.WriteString(robot)
 		}
 
 	case StateSuccessAnim:
-		foundFrame := `
-       /----\ 
-    !! |O  O| !!
-       \____/`
+		// Success Robot
+		eyeStyle := lipgloss.NewStyle().Foreground(secondaryColor).Bold(true)
+		bodyStyle := lipgloss.NewStyle().Foreground(subtleColor)
+
+		top := bodyStyle.Render("       /----\\")
+		bot := bodyStyle.Render("       \\____/")
+		eyes := fmt.Sprintf("|%s  %s|", eyeStyle.Render("^"), eyeStyle.Render("^"))
+		sparkles := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("    !!        !!")
+
+		robot := fmt.Sprintf("%s\n%s \n       %s\n%s", sparkles, top, eyes, bot)
+
 		s.WriteString(fmt.Sprintf("Thinking about: %s...\n", m.Question))
-		s.WriteString(foundFrame)
+		s.WriteString(robot)
 
 	case StateSuggestion:
 		s.WriteString(TitleStyle.Render("Suggestion:"))
@@ -935,7 +962,7 @@ type SudoReadMsg struct {
 }
 
 func tick() tea.Cmd {
-	return tea.Tick(time.Millisecond*750, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Millisecond*200, func(t time.Time) tea.Msg {
 		return TickMsg(t)
 	})
 }
