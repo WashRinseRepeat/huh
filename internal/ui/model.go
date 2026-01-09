@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,7 +89,20 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 
 	if question == "" {
 		initialState = StateInput
-		ti.Placeholder = "e.g. how do I check disk space?"
+		// Random Placeholders to guide the user
+		placeholders := []string{
+			"how do I check disk space?",
+			"how do I undo the last git commit?",
+			"find all large files in /var",
+			"convert video.mp4 to gif",
+			"check my public IP address",
+			"list all running docker containers",
+			"compress this directory into a tarball",
+			"show me the weather in Tokyo",
+			"delete all files older than 7 days",
+			"replace 'foo' with 'bar' in all files",
+		}
+		ti.Placeholder = "e.g. " + placeholders[rand.Intn(len(placeholders))]
 		ti.Focus()
 	}
 
