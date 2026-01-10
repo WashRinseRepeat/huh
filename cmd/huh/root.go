@@ -80,20 +80,20 @@ var rootCmd = &cobra.Command{
 		// 4. Define Query Function
 		queryFunc := func(q string, dynamicContext string) (string, error) {
 			finalQuestion := q
-			
+
 			// Context is managed by the UI model and passed as dynamicContext
 			if dynamicContext != "" {
 				finalQuestion = fmt.Sprintf("%s\n\nAttached Context:\n%s", q, dynamicContext)
 			}
 
-            // Build User Context String
-            var customContext strings.Builder
-            if len(sysCtx.Custom) > 0 {
-                customContext.WriteString("User Info: ")
-                for k, v := range sysCtx.Custom {
-                    customContext.WriteString(fmt.Sprintf("%s=%s; ", k, v))
-                }
-            }
+			// Build User Context String
+			var customContext strings.Builder
+			if len(sysCtx.Custom) > 0 {
+				customContext.WriteString("User Info: ")
+				for k, v := range sysCtx.Custom {
+					customContext.WriteString(fmt.Sprintf("%s=%s; ", k, v))
+				}
+			}
 
 			baseSystemPrompt := config.AppConfig.SystemPrompt
 			if baseSystemPrompt == "" {
@@ -104,18 +104,18 @@ var rootCmd = &cobra.Command{
 
 			systemPrompt := fmt.Sprintf(
 				"Context: OS: %s, Distro: %s, Shell: %s. %s\n"+
-				"User Query: '%s'.\n"+
-				"%s",
+					"User Query: '%s'.\n"+
+					"%s",
 				sysCtx.OS, sysCtx.Distro, sysCtx.Shell, customContext.String(), q, baseSystemPrompt,
 			)
-			
+
 			return provider.Query(cmd.Context(), systemPrompt, finalQuestion)
 		}
 
 		// 5. Define Explain Function
 		explainFunc := func(command string, dynamicContext string) (string, error) {
 			prompt := fmt.Sprintf("Explain the following command briefly: '%s'", command)
-			
+
 			if dynamicContext != "" {
 				prompt += fmt.Sprintf("\n\nContext:\n%s", dynamicContext)
 			}
@@ -131,7 +131,7 @@ var rootCmd = &cobra.Command{
 					"You may explain the change briefly if needed.",
 				question, originalCommand, refinement,
 			)
-			
+
 			if dynamicContext != "" {
 				refinePrompt += fmt.Sprintf("\n\nContext:\n%s", dynamicContext)
 			}

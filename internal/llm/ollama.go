@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
 )
 
 type OllamaProvider struct {
