@@ -1,14 +1,14 @@
 package usercontext
 
 import (
-	"testing"
 	"huh/internal/config"
+	"testing"
 )
 
 func TestGetContextMatchesConfig(t *testing.T) {
 	// Mock config
 	config.AppConfig.Context = map[string]string{
-		"shell": "zsh", // Override detected shell
+		"shell":      "zsh", // Override detected shell
 		"custom_key": "custom_value",
 	}
 

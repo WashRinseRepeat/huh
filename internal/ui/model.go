@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,7 @@ type Model struct {
 	PreviousState      State // To return after file prompt
 	Question           string
 	Input              textinput.Model
+	CurrentPlaceholder string // Randomly selected placeholder
 	ContextInfo        string // Display string (e.g. "Attached: foo.txt")
 	ContextContent     string // Actual content
 	PermissionPath     string // Path that failed permission check
@@ -86,23 +88,38 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 	ti := textinput.New()
 	ti.Width = 50
 
+	placeholders := []string{
+		"how do I check disk space?",
+		"how do I delete a git branch?",
+		"how do I docker compose up?",
+		"how do I find files larger than 100MB?",
+		"how do I tar a directory?",
+		"how do I kill a process on port 3000?",
+		"how do I revert the last commit?",
+		"how do I watch the logs of a systemd service?",
+		"how do I unzip a file?",
+		"how do I check my IP address?",
+	}
+	currentPlaceholder := "e.g. " + placeholders[rand.Intn(len(placeholders))]
+
 	if question == "" {
 		initialState = StateInput
-		ti.Placeholder = "e.g. how do I check disk space?"
+		ti.Placeholder = currentPlaceholder
 		ti.Focus()
 	}
 
 	return Model{
-		State:          initialState,
-		Question:       question,
-		Input:          ti,
-		ContextInfo:    contextInfo,
-		ContextContent: contextContent,
-		Options:        []string{"Copy", "Explain", "Refine", "Cancel"},
-		SelectedOption: 0,
-		QueryFunc:      queryFunc,
-		ExplainFunc:    explainFunc,
-		RefineFunc:     refineFunc,
+		State:              initialState,
+		Question:           question,
+		Input:              ti,
+		CurrentPlaceholder: currentPlaceholder,
+		ContextInfo:        contextInfo,
+		ContextContent:     contextContent,
+		Options:            []string{"Copy", "Explain", "Refine", "Cancel"},
+		SelectedOption:     0,
+		QueryFunc:          queryFunc,
+		ExplainFunc:        explainFunc,
+		RefineFunc:         refineFunc,
 	}
 }
 
@@ -403,7 +420,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.State == StateRefining {
 						m.Input.Placeholder = "Your follow-up question here..."
 					} else {
-						m.Input.Placeholder = "e.g. how do I check disk space?"
+						m.Input.Placeholder = m.CurrentPlaceholder
 					}
 
 					m.FocusIndex = 0 // Reset focus to input
@@ -543,7 +560,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.State == StateRefining {
 			m.Input.Placeholder = "Your follow-up question here..."
 		} else {
-			m.Input.Placeholder = "e.g. how do I check disk space?"
+			m.Input.Placeholder = m.CurrentPlaceholder
 		}
 
 		m.FocusIndex = 0

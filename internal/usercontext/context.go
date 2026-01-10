@@ -10,13 +10,13 @@ import (
 )
 
 type SystemContext struct {
-	OS          string
-	Distro      string
-	Shell       string
-	PackageMgr  string
-	Hardware    string            // CPU/RAM (if enabled)
-	Clipboard   string            // Detected clipboard tool
-	Custom      map[string]string // User-defined context
+	OS         string
+	Distro     string
+	Shell      string
+	PackageMgr string
+	Hardware   string            // CPU/RAM (if enabled)
+	Clipboard  string            // Detected clipboard tool
+	Custom     map[string]string // User-defined context
 }
 
 func GetContext() SystemContext {
@@ -117,7 +117,7 @@ func detectClipboard() string {
 	if _, err := exec.LookPath("xclip"); err == nil {
 		return "xclip"
 	}
-	return "unknown" 
+	return "unknown"
 }
 
 func getHardwareInfo() string {
