@@ -254,6 +254,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.Question = m.Input.Value()
 				if m.Question != "" {
+					m.PreviousState = StateInput
 					m.State = StateLoading
 					return m, tea.Batch(
 						func() tea.Msg {
@@ -308,6 +309,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Clear suggestion in model so View() shows "Thinking about..." instead of "Explaining..."
 					m.Suggestion = ""
 
+					m.PreviousState = StateRefining
 					m.State = StateLoading
 					return m, tea.Batch(
 						func() tea.Msg {
@@ -509,6 +511,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "q" || msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
+			if msg.String() == "esc" {
+				m.State = m.PreviousState
+				m.Err = nil
+				return m, nil
+			}
 
 		case StatePermissionDenied:
 			switch msg.String() {
@@ -594,6 +601,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 		m.State = StateCopied
 		return m, waitForCopy()
 	case "Explain":
+		m.PreviousState = StateSuggestion
 		m.State = StateLoading // Show loading while explaining
 		return m, func() tea.Msg {
 			target := m.Suggestion
@@ -944,7 +952,7 @@ func (m Model) View() string {
 		s.WriteString(TitleStyle.Foreground(errorColor).Render("Error:"))
 		s.WriteString("\n")
 		s.WriteString(fmt.Sprintf("%v", m.Err))
-		s.WriteString("\n\n(Press q to quit)")
+		s.WriteString("\n\n(Press q to quit, Esc to try again)")
 
 	case StatePermissionDenied:
 		s.WriteString(TitleStyle.Foreground(errorColor).Render("Permission Denied"))
