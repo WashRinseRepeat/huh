@@ -114,14 +114,14 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 		Question:           question,
 		Input:              ti,
 		CurrentPlaceholder: currentPlaceholder,
-		ContextInfo:    contextInfo,
-		ContextContent: contextContent,
-		Options:        []string{"Copy", "Explain", "Refine", "Cancel"},
-		SelectedOption: 0,
-		QueryFunc:      queryFunc,
-		ExplainFunc:    explainFunc,
-		RefineFunc:     refineFunc,
-		CopyFunc:       clipboard.WriteAll,
+		ContextInfo:        contextInfo,
+		ContextContent:     contextContent,
+		Options:            []string{"Copy", "Explain", "Refine", "Cancel"},
+		SelectedOption:     0,
+		QueryFunc:          queryFunc,
+		ExplainFunc:        explainFunc,
+		RefineFunc:         refineFunc,
+		CopyFunc:           clipboard.WriteAll,
 	}
 }
 
@@ -712,7 +712,8 @@ func (m *Model) updateViewportContent() {
 
 		content.WriteString("\n")
 		if len(m.RunnableCommands) > 1 {
-			content.WriteString(wordwrap.String(lipgloss.NewStyle().Foreground(subtleColor).Render("(Tab to cycle commands)"), m.viewport.Width))
+			hint := fmt.Sprintf("(Tab to cycle commands • %d/%d)", m.ActiveCommandIndex+1, len(m.RunnableCommands))
+			content.WriteString(wordwrap.String(lipgloss.NewStyle().Foreground(subtleColor).Render(hint), m.viewport.Width))
 			content.WriteString("\n")
 		}
 		content.WriteString("\n")
