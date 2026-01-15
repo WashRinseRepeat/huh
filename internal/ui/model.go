@@ -712,7 +712,7 @@ func (m *Model) updateViewportContent() {
 
 		content.WriteString("\n")
 		if len(m.RunnableCommands) > 1 {
-			hint := fmt.Sprintf("(Tab to cycle commands • %d/%d)", m.ActiveCommandIndex+1, len(m.RunnableCommands))
+			hint := fmt.Sprintf("(Tab to cycle commands - %d/%d)", m.ActiveCommandIndex+1, len(m.RunnableCommands))
 			content.WriteString(wordwrap.String(lipgloss.NewStyle().Foreground(subtleColor).Render(hint), m.viewport.Width))
 			content.WriteString("\n")
 		}
@@ -815,7 +815,9 @@ func (m Model) View() string {
 		// Render Matches
 		if len(m.Matches) > 0 {
 			s.WriteString("\n\n")
-			s.WriteString(TitleStyle.Render("Suggestions:"))
+			s.WriteString(TitleStyle.Render("Suggestions"))
+			s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render(fmt.Sprintf(" (%d/%d)", m.MatchIndex+1, len(m.Matches))))
+			s.WriteString(TitleStyle.Render(":"))
 			s.WriteString("\n")
 
 			// Limit to 5 matches for cleaner UI
