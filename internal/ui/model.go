@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 
+	"huh/internal/history"
+
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -32,6 +34,8 @@ const (
 	StateError
 	StatePermissionDenied
 	StateCopied
+	StateHistoryMenu
+	StateHistoryList
 )
 
 type CommandLayout struct {
@@ -82,6 +86,10 @@ type Model struct {
 	viewport  viewport.Model
 	maxHeight int
 	ready     bool
+
+	// History
+	HistoryItems     []history.Item
+	HistoryListIndex int
 }
 
 func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
@@ -103,16 +111,29 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 	}
 	currentPlaceholder := "e.g. " + placeholders[rand.Intn(len(placeholders))]
 
+	// History logic
+	var historyItems []history.Item
+	// Only load history if we are starting fresh (no question provided)
+	// We might load it anyway just in case? No, saving requires loading, but model doesn't need it unless viewing.
+	// But if we want to show the menu, we must check if history exists.
+	loadedHistory, _ := history.Load()
+	historyItems = loadedHistory
+
 	if question == "" {
-		initialState = StateInput
-		ti.Placeholder = currentPlaceholder
-		ti.Focus()
+		if len(historyItems) > 0 {
+			initialState = StateHistoryMenu
+		} else {
+			initialState = StateInput
+			ti.Placeholder = currentPlaceholder
+			ti.Focus()
+		}
 	}
 
 	return Model{
 		State:              initialState,
 		Question:           question,
 		Input:              ti,
+		HistoryItems:       historyItems,
 		CurrentPlaceholder: currentPlaceholder,
 		ContextInfo:    contextInfo,
 		ContextContent: contextContent,
@@ -181,6 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case CopiedTimeoutMsg:
+		m.saveToHistory()
 		return m, tea.Quit
 
 	case SuggestionMsg:
@@ -195,26 +217,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Explanation = "" // Clear previous if any
 		m.State = StateSuggestion
 
-		// Parse Markdown Code Blocks
-		// Use regex to find all code blocks
-		re := regexp.MustCompile("(?s)```(.*?)```")
-		matches := re.FindAllStringSubmatch(m.Suggestion, -1)
-
-		m.RunnableCommands = nil
-		if len(matches) > 0 {
-			for _, match := range matches {
-				raw := match[1]
-				// Clean content
-				raw = strings.TrimSpace(raw)
-				if idx := strings.Index(raw, "\n"); idx != -1 {
-					firstLine := raw[:idx]
-					if !strings.Contains(firstLine, " ") {
-						raw = strings.TrimSpace(raw[idx+1:])
-					}
-				}
-				m.RunnableCommands = append(m.RunnableCommands, raw)
-			}
-			// Default to last command as active
+		m.RunnableCommands = extractRunnableCommands(m.Suggestion)
+		if len(m.RunnableCommands) > 0 {
 			m.ActiveCommandIndex = len(m.RunnableCommands) - 1
 		} else {
 			m.ActiveCommandIndex = -1
@@ -328,6 +332,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.State = StateSuggestion
 				return m, nil
 			case "ctrl+c":
+				m.saveToHistory()
 				return m, tea.Quit
 			}
 			var cmd tea.Cmd
@@ -457,6 +462,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StateSuggestion:
 			switch msg.String() {
 			case "q", "ctrl+c":
+				m.saveToHistory()
 				return m, tea.Quit
 			case "tab":
 				if len(m.RunnableCommands) > 1 {
@@ -561,6 +567,94 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				return m, tea.Quit
 			}
+
+		case StateHistoryMenu:
+			switch msg.String() {
+			case "up", "k":
+				if m.SelectedOption > 0 {
+					m.SelectedOption--
+				}
+				return m, nil
+			case "down", "j":
+				if m.SelectedOption < 2 {
+					m.SelectedOption++
+				}
+				return m, nil
+			case "enter":
+				switch m.SelectedOption {
+				case 0: // Start new chat
+					m.State = StateInput
+					m.Input.Focus()
+					return m, textinput.Blink
+				case 1: // View last answer
+					if len(m.HistoryItems) > 0 {
+						last := m.HistoryItems[len(m.HistoryItems)-1]
+						m.Question = last.Question
+						m.Suggestion = last.Answer
+						m.ContextContent = last.ContextContent
+						m.ContextInfo = last.ContextInfo
+						m.RunnableCommands = extractRunnableCommands(m.Suggestion)
+						if len(m.RunnableCommands) > 0 {
+							m.ActiveCommandIndex = len(m.RunnableCommands) - 1
+						} else {
+							m.ActiveCommandIndex = -1
+						}
+						m.State = StateSuggestion
+						m.SelectedOption = 0 // Reset action bar selection (Copy)
+						m.updateViewportContent()
+					}
+					return m, nil
+				case 2: // View history
+					m.State = StateHistoryList
+					m.HistoryListIndex = 0 // Start at top (newest)
+					return m, nil
+				}
+			case "q", "esc", "ctrl+c":
+				return m, tea.Quit
+			}
+
+		case StateHistoryList:
+			switch msg.String() {
+			case "up", "k":
+				if m.HistoryListIndex > 0 {
+					m.HistoryListIndex--
+				}
+				return m, nil
+			case "down", "j":
+				if m.HistoryListIndex < len(m.HistoryItems)-1 {
+					m.HistoryListIndex++
+				}
+				return m, nil
+			case "enter":
+				// Load selected item
+				// List is displayed newest first?
+				// If index 0 is newest, then item is HistoryItems[len-1-index]
+				if len(m.HistoryItems) > 0 {
+					idx := len(m.HistoryItems) - 1 - m.HistoryListIndex
+					if idx >= 0 && idx < len(m.HistoryItems) {
+						item := m.HistoryItems[idx]
+						m.Question = item.Question
+						m.Suggestion = item.Answer
+						m.ContextContent = item.ContextContent
+						m.ContextInfo = item.ContextInfo
+						m.RunnableCommands = extractRunnableCommands(m.Suggestion)
+						if len(m.RunnableCommands) > 0 {
+							m.ActiveCommandIndex = len(m.RunnableCommands) - 1
+						} else {
+							m.ActiveCommandIndex = -1
+						}
+						m.State = StateSuggestion
+						m.SelectedOption = 0 // Reset action bar selection
+						m.updateViewportContent()
+					}
+				}
+				return m, nil
+			case "esc":
+				m.State = StateHistoryMenu
+				return m, nil
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			}
 		}
 	}
 
@@ -646,9 +740,24 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case "Cancel":
+		m.saveToHistory()
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+func (m Model) saveToHistory() {
+	if m.Suggestion == "" {
+		return
+	}
+	item := history.Item{
+		Question:       m.Question,
+		Answer:         m.Suggestion,
+		ContextContent: m.ContextContent,
+		ContextInfo:    m.ContextInfo,
+		Timestamp:      time.Now(),
+	}
+	history.Add(item)
 }
 
 func (m *Model) updateViewportContent() {
@@ -1010,6 +1119,51 @@ func (m Model) View() string {
 		s.WriteString(TitleStyle.Copy().Foreground(secondaryColor).Render("  ✓ Copied to clipboard!"))
 		s.WriteString("\n\n")
 		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (Quitting...)"))
+
+	case StateHistoryMenu:
+		s.WriteString(TitleStyle.Render("Welcome back to huh"))
+		s.WriteString("\n\n")
+
+		opts := []string{"Start new chat", "View last answer", "View history"}
+		for i, opt := range opts {
+			cursor := " "
+			style := ItemStyle
+			if m.SelectedOption == i {
+				cursor = ">"
+				style = SelectedItemStyle
+			}
+			s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, opt)) + "\n")
+		}
+
+		s.WriteString("\n(Enter to select, Esc to quit)")
+
+	case StateHistoryList:
+		s.WriteString(TitleStyle.Render("History (Last 10)"))
+		s.WriteString("\n\n")
+
+		// Display in reverse order (newest first)
+		for i := 0; i < len(m.HistoryItems); i++ {
+			// Virtual index i maps to real index len-1-i
+			realIdx := len(m.HistoryItems) - 1 - i
+			item := m.HistoryItems[realIdx]
+
+			cursor := " "
+			style := ItemStyle
+			if m.HistoryListIndex == i {
+				cursor = ">"
+				style = SelectedItemStyle
+			}
+
+			// Maybe truncate long questions?
+			q := item.Question
+			if len(q) > 60 {
+				q = q[:57] + "..."
+			}
+
+			s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, q)) + "\n")
+		}
+
+		s.WriteString("\n(Enter to view, Esc to back)")
 	}
 
 	return lipgloss.NewStyle().Margin(1, 1).Render(s.String())
@@ -1132,4 +1286,28 @@ func (m Model) performCopy() (tea.Model, tea.Cmd) {
 	}
 	m.State = StateCopied
 	return m, waitForCopy()
+}
+
+func extractRunnableCommands(suggestion string) []string {
+	// Parse Markdown Code Blocks
+	// Use regex to find all code blocks
+	re := regexp.MustCompile("(?s)```(.*?)```")
+	matches := re.FindAllStringSubmatch(suggestion, -1)
+
+	var runnableCommands []string
+	if len(matches) > 0 {
+		for _, match := range matches {
+			raw := match[1]
+			// Clean content
+			raw = strings.TrimSpace(raw)
+			if idx := strings.Index(raw, "\n"); idx != -1 {
+				firstLine := raw[:idx]
+				if !strings.Contains(firstLine, " ") {
+					raw = strings.TrimSpace(raw[idx+1:])
+				}
+			}
+			runnableCommands = append(runnableCommands, raw)
+		}
+	}
+	return runnableCommands
 }
