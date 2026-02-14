@@ -34,11 +34,13 @@ type ollamaRequest struct {
 }
 
 type ollamaResponse struct {
-	Response string `json:"response"`
-	Done     bool   `json:"done"`
+	Response        string `json:"response"`
+	Done            bool   `json:"done"`
+	PromptEvalCount int    `json:"prompt_eval_count"`
+	EvalCount       int    `json:"eval_count"`
 }
 
-func (o *OllamaProvider) Query(ctx context.Context, systemPrompt string, userQuery string) (string, error) {
+func (o *OllamaProvider) Query(ctx context.Context, systemPrompt string, userQuery string) (string, TokenUsage, error) {
 	reqBody := ollamaRequest{
 		Model:  o.Model,
 		Prompt: userQuery,
@@ -48,31 +50,35 @@ func (o *OllamaProvider) Query(ctx context.Context, systemPrompt string, userQue
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 
 	apiURL := fmt.Sprintf("%s/api/generate", o.Host)
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ollama API error: status %d", resp.StatusCode)
+		return "", TokenUsage{}, fmt.Errorf("ollama API error: status %d", resp.StatusCode)
 	}
 
 	var startResp ollamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&startResp); err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 
-	return startResp.Response, nil
+	usage := TokenUsage{
+		PromptTokens:     startResp.PromptEvalCount,
+		CompletionTokens: startResp.EvalCount,
+	}
+	return startResp.Response, usage, nil
 }

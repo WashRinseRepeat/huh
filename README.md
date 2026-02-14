@@ -11,6 +11,8 @@
 *   **Interactive TUI**: Review, refine, copy, or get an explanation of the command before running it.
 *   **Context Aware**: Knows your OS, Distro, and Shell to provide relevant answers.
 *   **Flexible Providers**: Supports local models via **Ollama** (default) or cloud providers like **OpenAI** and **OpenRouter**.
+*   **First-Run Setup Wizard**: Guided TUI walks you through provider selection and configuration on first launch.
+*   **Token Usage Tracking**: See input, output, and total token counts for your session.
 *   **Cross-Platform**: Works on **Linux** and **macOS**.
 
 ## Installation
@@ -25,10 +27,23 @@ cd huh
 make install
 ```
 
+## First-Run Setup
+
+On first launch, `huh` presents an interactive setup wizard that guides you through:
+
+1. **Provider selection** — Choose between Ollama (local), OpenRouter (cloud), or any OpenAI-compatible endpoint, with descriptions of each option's trade-offs.
+2. **Provider configuration** — The wizard walks you through the specifics:
+   - **Ollama**: Auto-detects your local instance and lists installed models.
+   - **OpenRouter**: Guides you through getting an API key and links you to [browse models filtered by price and category](https://openrouter.ai/models?categories=programming&max_price=1&order=most-popular).
+   - **OpenAI-compatible**: Prompts for base URL, optional API key, and model name.
+3. **Config written** — Saves to `~/.config/huh/config.yaml` and launches the app.
+
+You can navigate back through any step with `Esc` and quit entirely with `Ctrl+C`.
+
 ## Configuration
 
 `huh` uses a configuration file located at `~/.config/huh/config.yaml`.
-On the first run, `huh` will create a default configuration file for you.
+The setup wizard creates this file on first run. You can edit it at any time.
 
 ### Supported Providers
 
@@ -74,7 +89,7 @@ providers:
 ### Customizing Behavior
 
 You can customize the system prompt to change how `huh` behaves, or add custom context variables.
-I would recommend you keep the bash part so huh can display and interact with code blocks appropiately.
+I would recommend you keep the bash part so `huh` can display and interact with code blocks appropiately.
 
 ```yaml
 # ~/.config/huh/config.yaml
@@ -116,6 +131,10 @@ You can attach files to your query for context.
 ```bash
 huh -f error.log "why is this failing?"
 ```
+
+### Token Usage
+
+Token counts are displayed at the bottom of the screen throughout your session, showing input tokens, output tokens, and the running total. This helps you keep track of API costs when using cloud providers.
 
 ## License
 

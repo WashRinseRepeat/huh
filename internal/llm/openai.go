@@ -39,9 +39,13 @@ type openAIResponse struct {
 	Choices []struct {
 		Message openAIMessage `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
-func (o *OpenAIProvider) Query(ctx context.Context, systemPrompt string, userQuery string) (string, error) {
+func (o *OpenAIProvider) Query(ctx context.Context, systemPrompt string, userQuery string) (string, TokenUsage, error) {
 	reqBody := openAIRequest{
 		Model: o.Model,
 		Messages: []openAIMessage{
@@ -52,12 +56,12 @@ func (o *OpenAIProvider) Query(ctx context.Context, systemPrompt string, userQue
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+o.APIKey)
@@ -65,22 +69,26 @@ func (o *OpenAIProvider) Query(ctx context.Context, systemPrompt string, userQue
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("openai API error: status %d", resp.StatusCode)
+		return "", TokenUsage{}, fmt.Errorf("openai API error: status %d", resp.StatusCode)
 	}
 
 	var parsedResp openAIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsedResp); err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 
 	if len(parsedResp.Choices) == 0 {
-		return "", fmt.Errorf("openai returned no choices")
+		return "", TokenUsage{}, fmt.Errorf("openai returned no choices")
 	}
 
-	return parsedResp.Choices[0].Message.Content, nil
+	usage := TokenUsage{
+		PromptTokens:     parsedResp.Usage.PromptTokens,
+		CompletionTokens: parsedResp.Usage.CompletionTokens,
+	}
+	return parsedResp.Choices[0].Message.Content, usage, nil
 }

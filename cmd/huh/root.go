@@ -8,6 +8,7 @@ import (
 
 	"huh/internal/config"
 	"huh/internal/llm"
+	"huh/internal/setup"
 	"huh/internal/ui"
 	"huh/internal/usercontext"
 
@@ -37,6 +38,15 @@ var rootCmd = &cobra.Command{
 			}
 			fmt.Println(path)
 			return
+		}
+
+		// 0. First-start setup wizard
+		if !config.ConfigExists() {
+			if !setup.Run() {
+				// User cancelled the wizard
+				return
+			}
+			config.Reload()
 		}
 
 		question := strings.Join(args, " ")
@@ -78,7 +88,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// 4. Define Query Function
-		queryFunc := func(q string, dynamicContext string) (string, error) {
+		queryFunc := func(q string, dynamicContext string) (string, llm.TokenUsage, error) {
 			finalQuestion := q
 			
 			// Context is managed by the UI model and passed as dynamicContext
@@ -113,7 +123,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// 5. Define Explain Function
-		explainFunc := func(command string, dynamicContext string) (string, error) {
+		explainFunc := func(command string, dynamicContext string) (string, llm.TokenUsage, error) {
 			prompt := fmt.Sprintf("Explain the following command briefly: '%s'", command)
 			
 			if dynamicContext != "" {
@@ -123,7 +133,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// 6. Define Refine Function
-		refineFunc := func(originalCommand, refinement, dynamicContext string) (string, error) {
+		refineFunc := func(originalCommand, refinement, dynamicContext string) (string, llm.TokenUsage, error) {
 			refinePrompt := fmt.Sprintf(
 				"Original Request: '%s'. Original Command: '%s'. Refinement Request: '%s'.\n"+
 					"Return the updated command inside a markdown code block:\n"+

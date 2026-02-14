@@ -39,9 +39,13 @@ type openRouterResponse struct {
 	Choices []struct {
 		Message openRouterMessage `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
-func (o *OpenRouterProvider) Query(ctx context.Context, systemPrompt string, userQuery string) (string, error) {
+func (o *OpenRouterProvider) Query(ctx context.Context, systemPrompt string, userQuery string) (string, TokenUsage, error) {
 	reqBody := openRouterRequest{
 		Model: o.Model,
 		Messages: []openRouterMessage{
@@ -52,37 +56,39 @@ func (o *OpenRouterProvider) Query(ctx context.Context, systemPrompt string, use
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+o.APIKey)
-	// OpenRouter specific headers for ranking/stats (optional but recommended)
-	// We can add these later if requested, or maybe add a "HTTP-Referer" and "X-Title" if we had app metadata.
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("openrouter API error: status %d", resp.StatusCode)
+		return "", TokenUsage{}, fmt.Errorf("openrouter API error: status %d", resp.StatusCode)
 	}
 
 	var parsedResp openRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsedResp); err != nil {
-		return "", err
+		return "", TokenUsage{}, err
 	}
 
 	if len(parsedResp.Choices) == 0 {
-		return "", fmt.Errorf("openrouter returned no choices")
+		return "", TokenUsage{}, fmt.Errorf("openrouter returned no choices")
 	}
 
-	return parsedResp.Choices[0].Message.Content, nil
+	usage := TokenUsage{
+		PromptTokens:     parsedResp.Usage.PromptTokens,
+		CompletionTokens: parsedResp.Usage.CompletionTokens,
+	}
+	return parsedResp.Choices[0].Message.Content, usage, nil
 }

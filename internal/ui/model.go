@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"huh/internal/history"
+	"huh/internal/llm"
 
 	"time"
 
@@ -63,10 +64,14 @@ type Model struct {
 	AnimationFrame int
 
 	// Query
-	QueryFunc   func(string, string) (string, error)
-	ExplainFunc func(string, string) (string, error)
-	RefineFunc  func(string, string, string) (string, error)
+	QueryFunc   func(string, string) (string, llm.TokenUsage, error)
+	ExplainFunc func(string, string) (string, llm.TokenUsage, error)
+	RefineFunc  func(string, string, string) (string, llm.TokenUsage, error)
 	CopyFunc    func(string) error
+
+	// Token usage tracking
+	TotalPromptTokens     int
+	TotalCompletionTokens int
 
 	// Menu
 	Options        []string
@@ -92,7 +97,7 @@ type Model struct {
 	HistoryListIndex int
 }
 
-func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, error), explainFunc func(string, string) (string, error), refineFunc func(string, string, string) (string, error)) Model {
+func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, llm.TokenUsage, error), explainFunc func(string, string) (string, llm.TokenUsage, error), refineFunc func(string, string, string) (string, llm.TokenUsage, error)) Model {
 	initialState := StateLoading
 	ti := textinput.New()
 	ti.Width = 50
@@ -155,11 +160,11 @@ func (m Model) Init() tea.Cmd {
 	if m.State == StateLoading {
 		cmds = append(cmds,
 			func() tea.Msg {
-				res, err := m.QueryFunc(m.Question, m.ContextContent)
+				res, usage, err := m.QueryFunc(m.Question, m.ContextContent)
 				if err != nil {
 					return ErrorMsg(err)
 				}
-				return SuggestionMsg(res)
+				return SuggestionMsg{Content: res, Usage: usage}
 			},
 			tick(),
 		)
@@ -206,8 +211,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case SuggestionMsg:
+		// Accumulate token usage
+		m.TotalPromptTokens += msg.Usage.PromptTokens
+		m.TotalCompletionTokens += msg.Usage.CompletionTokens
 		// Transition to Success Animation
-		m.PendingSuggestion = string(msg)
+		m.PendingSuggestion = msg.Content
 		m.State = StateSuccessAnim
 		return m, waitForSuccess()
 
@@ -226,7 +234,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewportContent()
 
 	case ExplanationMsg:
-		m.Explanation = string(msg)
+		// Accumulate token usage
+		m.TotalPromptTokens += msg.Usage.PromptTokens
+		m.TotalCompletionTokens += msg.Usage.CompletionTokens
+		m.Explanation = msg.Content
 		m.State = StateExplained
 		m.updateViewportContent()
 
@@ -264,11 +275,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.State = StateLoading
 					return m, tea.Batch(
 						func() tea.Msg {
-							res, err := m.QueryFunc(m.Question, m.ContextContent)
+							res, usage, err := m.QueryFunc(m.Question, m.ContextContent)
 							if err != nil {
 								return ErrorMsg(err)
 							}
-							return SuggestionMsg(res)
+							return SuggestionMsg{Content: res, Usage: usage}
 						},
 						tick(),
 					)
@@ -319,11 +330,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.State = StateLoading
 					return m, tea.Batch(
 						func() tea.Msg {
-							res, err := m.RefineFunc(currentSuggestion, refinement, m.ContextContent)
+							res, usage, err := m.RefineFunc(currentSuggestion, refinement, m.ContextContent)
 							if err != nil {
 								return ErrorMsg(err)
 							}
-							return SuggestionMsg(res)
+							return SuggestionMsg{Content: res, Usage: usage}
 						},
 						tick(),
 					)
@@ -512,11 +523,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.RunnableCommands) > 0 {
 						target = m.RunnableCommands[m.ActiveCommandIndex]
 					}
-					exp, err := m.ExplainFunc(target, m.ContextContent)
+					exp, usage, err := m.ExplainFunc(target, m.ContextContent)
 					if err != nil {
 						return ErrorMsg(err)
 					}
-					return ExplanationMsg(exp)
+					return ExplanationMsg{Content: exp, Usage: usage}
 				}
 			case "r":
 				// Refine
@@ -721,11 +732,11 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 			if len(m.RunnableCommands) > 0 {
 				target = m.RunnableCommands[m.ActiveCommandIndex]
 			}
-			exp, err := m.ExplainFunc(target, m.ContextContent)
+			exp, usage, err := m.ExplainFunc(target, m.ContextContent)
 			if err != nil {
 				return ErrorMsg(err)
 			}
-			return ExplanationMsg(exp)
+			return ExplanationMsg{Content: exp, Usage: usage}
 		}
 	case "Refine":
 		if len(m.RunnableCommands) == 0 {
@@ -1166,16 +1177,30 @@ func (m Model) View() string {
 		s.WriteString("\n(Enter to view, Esc to back)")
 	}
 
+	// Token usage footer
+	totalTokens := m.TotalPromptTokens + m.TotalCompletionTokens
+	if totalTokens > 0 {
+		s.WriteString("\n")
+		tokenInfo := fmt.Sprintf("tokens: %d in / %d out / %d total", m.TotalPromptTokens, m.TotalCompletionTokens, totalTokens)
+		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render(tokenInfo))
+	}
+
 	return lipgloss.NewStyle().Margin(1, 1).Render(s.String())
 }
 
 // Commands
 func SetSuggestion(cmd string) tea.Msg {
-	return SuggestionMsg(cmd)
+	return SuggestionMsg{Content: cmd}
 }
 
-type SuggestionMsg string
-type ExplanationMsg string
+type SuggestionMsg struct {
+	Content string
+	Usage   llm.TokenUsage
+}
+type ExplanationMsg struct {
+	Content string
+	Usage   llm.TokenUsage
+}
 type ErrorMsg error
 type TickMsg time.Time
 type SuccessTimeoutMsg time.Time
