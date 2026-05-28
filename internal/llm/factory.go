@@ -2,8 +2,23 @@ package llm
 
 import (
 	"fmt"
-	"huh/internal/config"
+	"os"
+
+	"github.com/WashRinseRepeat/huh/internal/config"
 )
+
+// resolveAPIKey returns an API key for a provider, preferring the value from
+// the environment variable named by params["api_key_env"] if it is set and
+// non-empty. Falls back to params["api_key"]. Keeps secrets out of the YAML
+// file when api_key_env is used.
+func resolveAPIKey(params map[string]string) string {
+	if envName := params["api_key_env"]; envName != "" {
+		if v := os.Getenv(envName); v != "" {
+			return v
+		}
+	}
+	return params["api_key"]
+}
 
 func NewProvider(name string) (LLM, error) {
 	// If name is empty, use default from config
@@ -29,10 +44,10 @@ func NewProvider(name string) (LLM, error) {
 		return NewOllamaProvider(host, model), nil
 
 	case "openai":
-		apiKey := providerConfig.Params["api_key"]
+		apiKey := resolveAPIKey(providerConfig.Params)
 		model := providerConfig.Params["model"]
 		if apiKey == "" {
-			return nil, fmt.Errorf("openai provider '%s' missing api_key", name)
+			return nil, fmt.Errorf("openai provider '%s' missing api_key (set api_key in config or api_key_env to an environment variable name)", name)
 		}
 		if model == "" {
 			model = "gpt-4-turbo"
@@ -40,10 +55,10 @@ func NewProvider(name string) (LLM, error) {
 		return NewOpenAIProvider(apiKey, model), nil
 
 	case "openrouter":
-		apiKey := providerConfig.Params["api_key"]
+		apiKey := resolveAPIKey(providerConfig.Params)
 		model := providerConfig.Params["model"]
 		if apiKey == "" {
-			return nil, fmt.Errorf("openrouter provider '%s' missing api_key", name)
+			return nil, fmt.Errorf("openrouter provider '%s' missing api_key (set api_key in config or api_key_env to an environment variable name)", name)
 		}
 		if model == "" {
 			model = "openai/gpt-3.5-turbo" // Default model for openrouter, just an example

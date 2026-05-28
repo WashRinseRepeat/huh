@@ -41,5 +41,9 @@ providers:
   openrouter:
     type: openrouter
     params:
+      # Either set api_key directly, or set api_key_env to the name of an
+      # environment variable that holds the key (preferred — keeps secrets
+      # out of this file). api_key_env takes precedence when set.
+      # api_key_env: OPENROUTER_API_KEY
       api_key: YOUR_OPENROUTER_API_KEY
       model: anthropic/claude-3-opus

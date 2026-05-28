@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"huh/internal/config"
+	"github.com/WashRinseRepeat/huh/internal/config"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"

@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"huh/internal/history"
-	"huh/internal/llm"
+	"github.com/WashRinseRepeat/huh/internal/history"
+	"github.com/WashRinseRepeat/huh/internal/llm"
 
 	"time"
 
@@ -18,9 +18,34 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/wordwrap"
 )
+
+// renderMarkdown renders explanation text via glamour so headers, lists,
+// tables, code blocks etc. look like rendered markdown instead of one big
+// italic block of "comment". Width is clamped because glamour doesn't
+// handle width < 20 gracefully; on render error we fall back to the raw
+// text (better something readable than nothing).
+func renderMarkdown(src string, width int) string {
+	if width < 40 {
+		width = 40
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return src
+	}
+	out, err := r.Render(src)
+	if err != nil {
+		return src
+	}
+	// Glamour pads with a leading blank line; trim so the title sits flush.
+	return strings.TrimLeft(out, "\n")
+}
 
 type State int
 
@@ -34,7 +59,6 @@ const (
 	StateExplained
 	StateError
 	StatePermissionDenied
-	StateCopied
 	StateHistoryMenu
 	StateHistoryList
 )
@@ -48,6 +72,7 @@ type Model struct {
 	State              State
 	PreviousState      State // To return after file prompt
 	Question           string
+	OriginalQuestion   string // First question asked this session; preserved across refines so the refine prompt always knows the user's actual goal
 	Input              textinput.Model
 	CurrentPlaceholder string
 	ContextInfo        string // Display string (e.g. "Attached: foo.txt")
@@ -57,6 +82,8 @@ type Model struct {
 	PendingSuggestion  string   // Holds suggestion during success animation
 	RunnableCommands   []string // Extracted commands for execution/copy
 	ActiveCommandIndex int      // Which command is currently selected
+	JustCopiedIndex    int      // Index of command just copied (-1 = none); shown as ✓ in final render
+	SavedInput         string   // Input.Value() preserved across the file-prompt sub-state so the user's question/refinement text isn't lost when they Esc out
 	Explanation        string
 	Err                error
 
@@ -66,8 +93,11 @@ type Model struct {
 	// Query
 	QueryFunc   func(string, string) (string, llm.TokenUsage, error)
 	ExplainFunc func(string, string) (string, llm.TokenUsage, error)
-	RefineFunc  func(string, string, string) (string, llm.TokenUsage, error)
-	CopyFunc    func(string) error
+	// RefineFunc(originalQuestion, original, refinement, dynamicContext) — the
+	// originalQuestion is the user's first/anchor question (not the refinement
+	// text), so the LLM gets the real goal even after several refine cycles.
+	RefineFunc func(string, string, string, string) (string, llm.TokenUsage, error)
+	CopyFunc   func(string) error
 
 	// Token usage tracking
 	TotalPromptTokens     int
@@ -97,7 +127,7 @@ type Model struct {
 	HistoryListIndex int
 }
 
-func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, llm.TokenUsage, error), explainFunc func(string, string) (string, llm.TokenUsage, error), refineFunc func(string, string, string) (string, llm.TokenUsage, error)) Model {
+func NewModel(question string, contextInfo string, contextContent string, queryFunc func(string, string) (string, llm.TokenUsage, error), explainFunc func(string, string) (string, llm.TokenUsage, error), refineFunc func(string, string, string, string) (string, llm.TokenUsage, error)) Model {
 	initialState := StateLoading
 	ti := textinput.New()
 	ti.Width = 50
@@ -137,12 +167,14 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 	return Model{
 		State:              initialState,
 		Question:           question,
+		OriginalQuestion:   question, // empty when launched interactively; captured later on first input submit
 		Input:              ti,
 		HistoryItems:       historyItems,
 		CurrentPlaceholder: currentPlaceholder,
+		JustCopiedIndex:    -1,
 		ContextInfo:    contextInfo,
 		ContextContent: contextContent,
-		Options:        []string{"Copy", "Explain", "Refine", "Cancel"},
+		Options:        []string{"Copy", "Explain", "Refine", "Quit"},
 		SelectedOption: 0,
 		QueryFunc:      queryFunc,
 		ExplainFunc:    explainFunc,
@@ -152,22 +184,21 @@ func NewModel(question string, contextInfo string, contextContent string, queryF
 }
 
 func (m Model) Init() tea.Cmd {
-	var cmds []tea.Cmd
+	// Always run the mascot animation tick so the corner mascot can blink
+	// / look around regardless of which state we land in.
+	cmds := []tea.Cmd{tick()}
 	if m.State == StateInput {
 		cmds = append(cmds, textinput.Blink)
 	}
-	// Always perform query if in loading state (initial state might be loading)
+	// Kick off the initial query when launched with a question on the CLI.
 	if m.State == StateLoading {
-		cmds = append(cmds,
-			func() tea.Msg {
-				res, usage, err := m.QueryFunc(m.Question, m.ContextContent)
-				if err != nil {
-					return ErrorMsg(err)
-				}
-				return SuggestionMsg{Content: res, Usage: usage}
-			},
-			tick(),
-		)
+		cmds = append(cmds, func() tea.Msg {
+			res, usage, err := m.QueryFunc(m.Question, m.ContextContent)
+			if err != nil {
+				return ErrorMsg(err)
+			}
+			return SuggestionMsg{Content: res, Usage: usage}
+		})
 	}
 	return tea.Batch(cmds...)
 }
@@ -201,12 +232,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewportContent()
 
 	case TickMsg:
-		if m.State == StateLoading {
-			m.AnimationFrame++
-			return m, tick()
-		}
+		// Drive the persistent mascot animation regardless of state.
+		// Re-schedule the next tick from here so it runs forever (until quit).
+		m.AnimationFrame++
+		return m, tick()
 
 	case CopiedTimeoutMsg:
+		// Only quit if we're still showing the post-copy suggestion view.
+		// If the user navigated away (e.g. hit 'r' to refine in the 300ms
+		// window), drop the timer and stay where they went.
+		if m.State != StateSuggestion || m.JustCopiedIndex < 0 {
+			return m, nil
+		}
 		m.saveToHistory()
 		return m, tea.Quit
 
@@ -227,10 +264,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.RunnableCommands = extractRunnableCommands(m.Suggestion)
 		if len(m.RunnableCommands) > 0 {
-			m.ActiveCommandIndex = len(m.RunnableCommands) - 1
+			m.ActiveCommandIndex = 0
 		} else {
 			m.ActiveCommandIndex = -1
 		}
+		m.JustCopiedIndex = -1
 		m.updateViewportContent()
 
 	case ExplanationMsg:
@@ -262,6 +300,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.FocusIndex == 1 {
 					// Attach File Button Clicked
 					m.PreviousState = m.State
+					m.SavedInput = m.Input.Value() // preserve question across file prompt
 					m.State = StateFilePrompt
 					m.Input.SetValue("")
 					m.Input.Placeholder = "/path/to/file"
@@ -271,6 +310,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.Question = m.Input.Value()
 				if m.Question != "" {
+					// Capture the original question on first submit so refine
+					// can pass it to the LLM even if the user refines later
+					// (which overwrites m.Question with the refinement text).
+					if m.OriginalQuestion == "" {
+						m.OriginalQuestion = m.Question
+					}
 					m.PreviousState = StateInput
 					m.State = StateLoading
 					return m, tea.Batch(
@@ -306,6 +351,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.FocusIndex == 1 {
 					// Attach File Button Clicked
 					m.PreviousState = m.State
+					m.SavedInput = m.Input.Value() // preserve refinement text across file prompt
 					m.State = StateFilePrompt
 					m.Input.SetValue("")
 					m.Input.Placeholder = "/path/to/file"
@@ -318,19 +364,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if refinement != "" {
 					m.Question = refinement // Update question to reflect new query in UI
 
-					// Capture current suggestion for refinement logic
-					currentSuggestion := m.Suggestion
-					if len(m.RunnableCommands) > 0 {
-						currentSuggestion = m.RunnableCommands[m.ActiveCommandIndex]
+					// Pick the refinement scope based on whether the answer
+					// is single-command or multi-command:
+					//   • 1 command  → send just the bare command (current
+					//     fast path, keeps the LLM focused on that string)
+					//   • 2+ commands → send the full original answer (prose
+					//     and all code blocks) so the LLM can update the
+					//     whole sequence in one shot
+					//   • 0 commands → fall back to full text (refine should
+					//     be blocked here, but be safe)
+					var currentSuggestion string
+					switch {
+					case len(m.RunnableCommands) > 1:
+						currentSuggestion = m.Suggestion
+					case len(m.RunnableCommands) == 1:
+						currentSuggestion = m.RunnableCommands[0]
+					default:
+						currentSuggestion = m.Suggestion
 					}
 					// Clear suggestion in model so View() shows "Thinking about..." instead of "Explaining..."
 					m.Suggestion = ""
 
 					m.PreviousState = StateRefining
 					m.State = StateLoading
+					originalQuestion := m.OriginalQuestion
 					return m, tea.Batch(
 						func() tea.Msg {
-							res, usage, err := m.RefineFunc(currentSuggestion, refinement, m.ContextContent)
+							res, usage, err := m.RefineFunc(originalQuestion, currentSuggestion, refinement, m.ContextContent)
 							if err != nil {
 								return ErrorMsg(err)
 							}
@@ -432,9 +492,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.ContextInfo += ", " + path
 					}
 
-					// Return to previous state
+					// Return to previous state, restoring the question text
+					// the user was typing before they opened the file prompt.
 					m.State = m.PreviousState
-					m.Input.SetValue("") // Clear input for question/refinement
+					m.Input.SetValue(m.SavedInput)
+					m.Input.SetCursor(len(m.SavedInput))
+					m.SavedInput = ""
 
 					// Restore placeholder
 					if m.State == StateRefining {
@@ -448,7 +511,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			case "esc":
+				// Cancel: restore the question text and placeholder, drop
+				// the half-typed file path.
 				m.State = m.PreviousState
+				m.Input.SetValue(m.SavedInput)
+				m.Input.SetCursor(len(m.SavedInput))
+				m.SavedInput = ""
+				if m.State == StateRefining {
+					m.Input.Placeholder = "Your follow-up question here..."
+				} else {
+					m.Input.Placeholder = m.CurrentPlaceholder
+				}
+				m.FocusIndex = 0
+				m.Input.Focus()
 				return m, nil
 			case "ctrl+c":
 				return m, tea.Quit
@@ -475,14 +550,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "q", "ctrl+c":
 				m.saveToHistory()
 				return m, tea.Quit
-			case "tab":
+			case "tab", "down", "j":
+				// Cycle commands forward when there are multiple; otherwise
+				// fall back to scrolling so single-command answers still
+				// scroll long preamble text with ↓.
 				if len(m.RunnableCommands) > 1 {
 					m.ActiveCommandIndex = (m.ActiveCommandIndex + 1) % len(m.RunnableCommands)
 					m.updateViewportContent()
 					m.ensureVisible(m.ActiveCommandIndex)
+				} else {
+					m.viewport.ScrollDown(1)
 				}
 				return m, nil
-			case "shift+tab":
+			case "shift+tab", "up", "k":
 				if len(m.RunnableCommands) > 1 {
 					m.ActiveCommandIndex--
 					if m.ActiveCommandIndex < 0 {
@@ -490,6 +570,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.updateViewportContent()
 					m.ensureVisible(m.ActiveCommandIndex)
+				} else {
+					m.viewport.ScrollUp(1)
 				}
 				return m, nil
 			case "left", "h":
@@ -500,10 +582,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.SelectedOption < len(m.Options)-1 {
 					m.SelectedOption++
 				}
-			case "up", "k":
-				m.viewport.ScrollUp(1)
-			case "down", "j":
-				m.viewport.ScrollDown(1)
 			case "pgup", "ctrl+u":
 				m.viewport.ScrollUp(m.viewport.Height / 2)
 			case "pgdown", "ctrl+d":
@@ -546,7 +624,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case StateExplained:
 			switch msg.String() {
 			case "esc", "q":
-				m.State = StateSuggestion // Go back
+				// Go back to the original answer. Re-render the viewport
+				// with the suggestion content (it currently holds the
+				// explanation) and reset scroll to the top so the user
+				// lands on the answer, not mid-page.
+				m.State = StateSuggestion
+				m.updateViewportContent()
+				m.viewport.GotoTop()
+				return m, nil
 			case "up", "k":
 				m.viewport.ScrollUp(1)
 			case "down", "j":
@@ -601,15 +686,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.HistoryItems) > 0 {
 						last := m.HistoryItems[len(m.HistoryItems)-1]
 						m.Question = last.Question
+						m.OriginalQuestion = last.Question
 						m.Suggestion = last.Answer
 						m.ContextContent = last.ContextContent
 						m.ContextInfo = last.ContextInfo
 						m.RunnableCommands = extractRunnableCommands(m.Suggestion)
 						if len(m.RunnableCommands) > 0 {
-							m.ActiveCommandIndex = len(m.RunnableCommands) - 1
+							m.ActiveCommandIndex = 0
 						} else {
 							m.ActiveCommandIndex = -1
 						}
+						m.JustCopiedIndex = -1
 						m.State = StateSuggestion
 						m.SelectedOption = 0 // Reset action bar selection (Copy)
 						m.updateViewportContent()
@@ -622,6 +709,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "q", "esc", "ctrl+c":
 				return m, tea.Quit
+			default:
+				// Type-to-start: any printable text (single keystroke or a
+				// paste) jumps straight into a new chat with that text as
+				// the start of input. The j/k/q vim-style bindings handled
+				// above take precedence.
+				if len(msg.Runes) >= 1 && msg.Runes[0] >= 0x20 && msg.Runes[0] != 0x7f {
+					text := string(msg.Runes)
+					m.State = StateInput
+					m.Input.SetValue(text)
+					m.Input.SetCursor(len(text))
+					m.Input.Focus()
+					return m, textinput.Blink
+				}
 			}
 
 		case StateHistoryList:
@@ -645,15 +745,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if idx >= 0 && idx < len(m.HistoryItems) {
 						item := m.HistoryItems[idx]
 						m.Question = item.Question
+						m.OriginalQuestion = item.Question
 						m.Suggestion = item.Answer
 						m.ContextContent = item.ContextContent
 						m.ContextInfo = item.ContextInfo
 						m.RunnableCommands = extractRunnableCommands(m.Suggestion)
 						if len(m.RunnableCommands) > 0 {
-							m.ActiveCommandIndex = len(m.RunnableCommands) - 1
+							m.ActiveCommandIndex = 0
 						} else {
 							m.ActiveCommandIndex = -1
 						}
+						m.JustCopiedIndex = -1
 						m.State = StateSuggestion
 						m.SelectedOption = 0 // Reset action bar selection
 						m.updateViewportContent()
@@ -696,9 +798,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ContextInfo += ", " + m.PermissionPath
 		}
 
-		// Return to previous state
+		// Return to previous state, restoring the user's question/refinement
+		// text that we stashed when entering the file prompt.
 		m.State = m.PreviousState
-		m.Input.SetValue("")
+		m.Input.SetValue(m.SavedInput)
+		m.Input.SetCursor(len(m.SavedInput))
+		m.SavedInput = ""
 
 		// Restore placeholder
 		if m.State == StateRefining {
@@ -750,7 +855,7 @@ func (m Model) handleSelection() (tea.Model, tea.Cmd) {
 		m.Input.Focus()
 		return m, textinput.Blink
 
-	case "Cancel":
+	case "Quit":
 		m.saveToHistory()
 		return m, tea.Quit
 	}
@@ -800,6 +905,13 @@ func (m *Model) updateViewportContent() {
 
 						// Render command
 						renderedCmd := style.Render(cmdVal)
+						if cmdIndex == m.JustCopiedIndex {
+							copiedLabel := lipgloss.NewStyle().
+								Foreground(secondaryColor).
+								Bold(true).
+								Render("  ✓ copied")
+							renderedCmd = lipgloss.JoinHorizontal(lipgloss.Center, renderedCmd, copiedLabel)
+						}
 						content.WriteString(renderedCmd)
 
 						// Record position
@@ -838,8 +950,8 @@ func (m *Model) updateViewportContent() {
 		}
 		content.WriteString("\n")
 	} else if m.State == StateExplained {
-		content.WriteString(wordwrap.String(DescriptionStyle.Render(m.Explanation), m.viewport.Width))
-		content.WriteString(wordwrap.String("\n(Press Esc to back)", m.viewport.Width))
+		content.WriteString(renderMarkdown(m.Explanation, m.viewport.Width))
+		content.WriteString("\n(↑/↓ scroll · Esc back to answer)")
 	}
 
 	str := content.String()
@@ -888,10 +1000,11 @@ func (m Model) View() string {
 
 	switch m.State {
 	case StateInput:
-		s.WriteString(TitleStyle.Render("What would you like to do?"))
+		subline := ""
 		if m.ContextInfo != "" {
-			s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render(fmt.Sprintf("\n(Context: %s)", m.ContextInfo)))
+			subline = fmt.Sprintf("(Context: %s)", m.ContextInfo)
 		}
+		s.WriteString(m.renderHeader(TitleStyle.Render("What would you like to do?"), subline))
 		s.WriteString("\n\n")
 
 		// Input View
@@ -905,13 +1018,42 @@ func (m Model) View() string {
 		}
 		s.WriteString(btnStyle.Render("[ Attach File ]"))
 
-		s.WriteString("\n\n(Tab to select, Enter to confirm, Esc to quit)")
+		s.WriteString("\n\n(Tab attach · Enter ask · Esc quit)")
 
 	case StateRefining:
-		s.WriteString(TitleStyle.Render("How should the command be changed?"))
+		// Title adapts to the scope of refinement: single-command answers
+		// edit one command; multi-command answers refine the full sequence.
+		title := "How should the command be changed?"
+		if len(m.RunnableCommands) > 1 {
+			title = "How should the answer be changed?"
+		}
+		s.WriteString(m.renderHeader(TitleStyle.Render(title), ""))
 		s.WriteString("\n\n")
-		s.WriteString(lipgloss.NewStyle().Foreground(secondaryColor).Render(m.Suggestion))
-		s.WriteString("\n\n")
+
+		// Anchor:
+		//   • Single command  → box the actual command so it's clear what's
+		//     being edited.
+		//   • Multi-command   → plain-text scope label only. We don't re-box
+		//     all the commands here because the user is coming straight from
+		//     the suggestion view and just saw them.
+		subtle := lipgloss.NewStyle().Foreground(subtleColor)
+		if len(m.RunnableCommands) > 1 {
+			question := m.Question
+			if len(question) > 60 {
+				question = question[:57] + "..."
+			}
+			s.WriteString(subtle.Render(fmt.Sprintf("Refining all %d commands of your answer to: \"%s\"", len(m.RunnableCommands), question)))
+			s.WriteString("\n\n")
+		} else {
+			anchor := m.Suggestion
+			if len(m.RunnableCommands) == 1 {
+				anchor = m.RunnableCommands[0]
+			}
+			s.WriteString(subtle.Render("Editing:"))
+			s.WriteString("\n")
+			s.WriteString(CommandStyle.Render(anchor))
+			s.WriteString("\n\n")
+		}
 
 		// Input View
 		s.WriteString(m.Input.View())
@@ -924,13 +1066,13 @@ func (m Model) View() string {
 		}
 		s.WriteString(btnStyle.Render("[Attach File]"))
 
-		s.WriteString("\n\n(Tab to select, Enter to confirm, Esc to cancel)")
+		s.WriteString("\n\n(Tab attach · Enter submit · Esc back)")
 
 	case StateFilePrompt:
-		s.WriteString(TitleStyle.Render("File to attach:"))
+		s.WriteString(m.renderHeader(TitleStyle.Render("File to attach:"), ""))
 		s.WriteString("\n\n")
 		s.WriteString(m.Input.View())
-		s.WriteString("\n\n(Press Enter to attach, Esc to cancel)")
+		s.WriteString("\n\n(Tab complete · Enter attach · Esc back)")
 
 		// Render Matches
 		if len(m.Matches) > 0 {
@@ -983,75 +1125,25 @@ func (m Model) View() string {
 		}
 
 	case StateLoading:
-		// Improved Robot Animation
-		// Frames: Center, Left, Right, Blink
-		eyeColor := primaryColor
-		if m.Explanation != "" {
-			eyeColor = secondaryColor // Green eyes when explaining/found
-		}
-
-		eyeStyle := lipgloss.NewStyle().Foreground(eyeColor).Bold(true)
-		bodyStyle := lipgloss.NewStyle().Foreground(subtleColor)
-
-		// Base parts
-		top := bodyStyle.Render("      /----\\")
-		bot := bodyStyle.Render("      \\____/")
-
-		// Dynamic parts
-		var eyes string
-
-		// 4-frame cycle
-		step := m.AnimationFrame % 4
-		switch step {
-		case 0: // Center
-			eyes = fmt.Sprintf("|%s  %s|", eyeStyle.Render("O"), eyeStyle.Render("O"))
-		case 1: // Look Left
-			eyes = fmt.Sprintf("|%s   |", eyeStyle.Render("O"))
-		case 2: // Look Right
-			eyes = fmt.Sprintf("|   %s|", eyeStyle.Render("O"))
-		case 3: // Blink
-			eyes = fmt.Sprintf("|%s  %s|", eyeStyle.Render("-"), eyeStyle.Render("-"))
-		}
-
-		// Add antenna bobbing
-		antenna := " "
-		if step%2 == 0 {
-			antenna = bodyStyle.Render("        |")
-		} else {
-			antenna = bodyStyle.Render("       \\|/") // Wiggle
-		}
-
-		robot := fmt.Sprintf("%s\n%s\n      %s\n%s", antenna, top, eyes, bot)
-
+		// Loading text plus the corner mascot (which is in MascotThinking).
+		// The previously-centered big robot is gone; the persistent mascot
+		// now carries the "I'm working" signal.
+		var title, subline string
 		if m.Explanation == "" && m.Suggestion == "" {
-			s.WriteString(fmt.Sprintf("Thinking about: %s...", m.Question))
+			title = fmt.Sprintf("Thinking about: %s...", m.Question)
 			if m.ContextInfo != "" {
-				s.WriteString(fmt.Sprintf("\n(Context: %s)", m.ContextInfo))
+				subline = fmt.Sprintf("(Context: %s)", m.ContextInfo)
 			}
-			s.WriteString("\n")
-			s.WriteString(robot)
 		} else {
-			s.WriteString("Explaining...\n")
-			s.WriteString(robot)
+			title = "Explaining..."
 		}
+		s.WriteString(m.renderHeader(TitleStyle.Render(title), subline))
 
 	case StateSuccessAnim:
-		// Success Robot
-		eyeStyle := lipgloss.NewStyle().Foreground(secondaryColor).Bold(true)
-		bodyStyle := lipgloss.NewStyle().Foreground(subtleColor)
-
-		top := bodyStyle.Render("       /----\\")
-		bot := bodyStyle.Render("       \\____/")
-		eyes := fmt.Sprintf("|%s  %s|", eyeStyle.Render("^"), eyeStyle.Render("^"))
-		sparkles := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("    !!        !!")
-
-		robot := fmt.Sprintf("%s\n%s \n       %s\n%s", sparkles, top, eyes, bot)
-
-		s.WriteString(fmt.Sprintf("Thinking about: %s...\n", m.Question))
-		s.WriteString(robot)
+		s.WriteString(m.renderHeader(TitleStyle.Render(fmt.Sprintf("Thinking about: %s...", m.Question)), ""))
 
 	case StateSuggestion:
-		s.WriteString(TitleStyle.Render("Suggestion:"))
+		s.WriteString(m.renderHeader(TitleStyle.Render("Suggestion:"), ""))
 		s.WriteString("\n")
 
 		s.WriteString(m.viewport.View())
@@ -1072,67 +1164,47 @@ func (m Model) View() string {
 		}
 
 		s.WriteString("\n")
-		// Render Options Horizontally
+		// Render Options Horizontally as [C]opy [E]xplain [R]efine [Q]uit.
+		// Brackets make the keyboard shortcut visible across all color schemes
+		// (underline alone was hard to spot).
 		var options []string
 		for i, opt := range m.Options {
 			style := ItemStyle
 			if m.SelectedOption == i {
 				style = SelectedItemStyle
 			}
-
-			// Underline shortcut character
-			// "Copy" -> "C" is index 0
-			// "Explain" -> "E" is index 0
-			// "Refine" -> "R" is index 0
-			// "Cancel" -> "C", wait. Cancel is usually Q or Esc. But visually it says "Cancel".
-			// If we want consistent shortcuts, maybe "Quit" instead of "Cancel"?
-			// The user said "underline the letters that are used for shortcuts".
-			// Let's assume standard first letter unless conflict.
-			// Copy (C), Explain (E), Refine (R), Cancel (?).
-			// If Cancel is "q", then we can't underline C.
-			// Maybe change "Cancel" to "Quit"? Or just not underline it if it's Esc/q.
-			// But for C/E/R it's easy.
-
-			var label string
-			if opt == "Cancel" {
-				label = opt // No underline for Cancel (uses Esc/q)
-			} else {
-				// Underline first letter
-				first := opt[:1]
-				rest := opt[1:]
-				label = lipgloss.NewStyle().Underline(true).Render(first) + rest
-			}
-
+			label := "[" + opt[:1] + "]" + opt[1:]
 			options = append(options, style.Render(label))
 		}
 		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, options...))
-		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (<-/-> select, Enter confirm, Arrows scroll)"))
+		// Hint varies by whether there are multiple commands to cycle through.
+		var hint string
+		if len(m.RunnableCommands) > 1 {
+			hint = "  (↑/↓ or Tab pick command · ←/→ action · Enter confirm · PgUp/Dn scroll · q quit)"
+		} else {
+			hint = "  (↑/↓ scroll · ←/→ action · Enter confirm · q quit)"
+		}
+		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render(hint))
 
 	case StateExplained:
-		s.WriteString(TitleStyle.Render("Explanation:"))
+		s.WriteString(m.renderHeader(TitleStyle.Render("Explanation:"), ""))
 		s.WriteString("\n")
 
 		s.WriteString(m.viewport.View())
 
 	case StateError:
-		s.WriteString(TitleStyle.Foreground(errorColor).Render("Error:"))
+		s.WriteString(m.renderHeader(TitleStyle.Foreground(errorColor).Render("Error:"), ""))
 		s.WriteString("\n")
 		s.WriteString(fmt.Sprintf("%v", m.Err))
-		s.WriteString("\n\n(Press q to quit, Esc to try again)")
+		s.WriteString("\n\n(Esc back · q quit)")
 
 	case StatePermissionDenied:
-		s.WriteString(TitleStyle.Foreground(errorColor).Render("Permission Denied"))
+		s.WriteString(m.renderHeader(TitleStyle.Foreground(errorColor).Render("Permission Denied"), ""))
 		s.WriteString("\n\n")
 		s.WriteString(fmt.Sprintf("Could not read '%s'.\nTry reading with sudo? (y/n)", m.PermissionPath))
 
-	case StateCopied:
-		s.WriteString("\n")
-		s.WriteString(TitleStyle.Copy().Foreground(secondaryColor).Render("  ✓ Copied to clipboard!"))
-		s.WriteString("\n\n")
-		s.WriteString(lipgloss.NewStyle().Foreground(subtleColor).Render("  (Quitting...)"))
-
 	case StateHistoryMenu:
-		s.WriteString(TitleStyle.Render("Welcome back to huh"))
+		s.WriteString(m.renderHeader(TitleStyle.Render("Welcome back to huh"), ""))
 		s.WriteString("\n\n")
 
 		opts := []string{"Start new chat", "View last answer", "View history"}
@@ -1146,10 +1218,10 @@ func (m Model) View() string {
 			s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, opt)) + "\n")
 		}
 
-		s.WriteString("\n(Enter to select, Esc to quit)")
+		s.WriteString("\n(Enter to select · type to start a new chat · Esc to quit)")
 
 	case StateHistoryList:
-		s.WriteString(TitleStyle.Render("History (Last 10)"))
+		s.WriteString(m.renderHeader(TitleStyle.Render("History (Last 10)"), ""))
 		s.WriteString("\n\n")
 
 		// Display in reverse order (newest first)
@@ -1171,10 +1243,12 @@ func (m Model) View() string {
 				q = q[:57] + "..."
 			}
 
-			s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, q)) + "\n")
+			relTime := relativeTime(item.Timestamp)
+			timeStr := lipgloss.NewStyle().Foreground(subtleColor).Render(relTime)
+			s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, q)) + "  " + timeStr + "\n")
 		}
 
-		s.WriteString("\n(Enter to view, Esc to back)")
+		s.WriteString("\n(Enter view · Esc back · q quit)")
 	}
 
 	// Token usage footer
@@ -1224,7 +1298,7 @@ func waitForSuccess() tea.Cmd {
 }
 
 func waitForCopy() tea.Cmd {
-	return tea.Tick(time.Millisecond*800, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Millisecond*300, func(t time.Time) tea.Msg {
 		return CopiedTimeoutMsg(t)
 	})
 }
@@ -1272,25 +1346,20 @@ func getMatches(pattern string) ([]string, error) {
 
 func sudoRead(path string) tea.Cmd {
 	return func() tea.Msg {
-		// Create temp file
+		// Create temp file and keep the handle open so we can wire it
+		// directly as the child's stdout — no shell, no quoting concerns.
 		f, err := os.CreateTemp("", "huh-sudo-*")
 		if err != nil {
 			return SudoReadMsg{Err: err}
 		}
-		f.Close()
 
-		// Use sh to capture output
-		// sudo cat <path> > <temp>
-		// We use sh -c to allow IO redirection
-		cmdStr := fmt.Sprintf("sudo cat %q > %q", path, f.Name())
-		c := exec.Command("sh", "-c", cmdStr)
-
-		// Connect stderr to capture sudo prompt
-		c.Stderr = os.Stderr
-		c.Stdout = os.Stderr // Just in case, but usually cat output goes to file
-		c.Stdin = os.Stdin
+		c := exec.Command("sudo", "cat", path)
+		c.Stdout = f          // cat output goes straight into the temp file
+		c.Stderr = os.Stderr  // sudo password prompt
+		c.Stdin = os.Stdin    // sudo reads the password from here
 
 		return tea.ExecProcess(c, func(err error) tea.Msg {
+			f.Close() // flush before the caller reads it
 			return SudoReadMsg{Err: err, ContentPath: f.Name()}
 		})()
 	}
@@ -1309,8 +1378,47 @@ func (m Model) performCopy() (tea.Model, tea.Cmd) {
 		m.State = StateError
 		return m, nil
 	}
-	m.State = StateCopied
+
+	// Mark which command was copied and re-render. We stay in StateSuggestion
+	// so the final frame left in the terminal shows the full suggestion (with
+	// a ✓ next to the copied command), which the user can mouse-select to
+	// grab the other commands.
+	m.JustCopiedIndex = m.ActiveCommandIndex
+	m.updateViewportContent()
 	return m, waitForCopy()
+}
+
+// relativeTime renders a time.Time as a short, human-readable interval
+// like "just now", "5 min ago", "yesterday", or "Jan 2" for older items.
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < 0:
+		return t.Format("Jan 2")
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1 min ago"
+		}
+		return fmt.Sprintf("%d min ago", m)
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		if h == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", h)
+	case d < 48*time.Hour:
+		return "yesterday"
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
+	default:
+		return t.Format("Jan 2")
+	}
 }
 
 func extractRunnableCommands(suggestion string) []string {

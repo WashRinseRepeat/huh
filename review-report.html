@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>huh — Pre-Release Review</title>
+<style>
+  :root {
+    --primary: #7D56F4;
+    --primary-soft: #7D56F420;
+    --primary-line: #7D56F440;
+    --secondary: #04B575;
+    --secondary-soft: #04B57518;
+    --accent: #ffd43b;
+    --error: #FF3333;
+    --subtle: #6B6B6B;
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --ink: #1a1a1a;
+    --ink-soft: #444;
+    --border: #ececec;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0e12;
+      --surface: #17171c;
+      --ink: #f0f0f0;
+      --ink-soft: #c0c0c0;
+      --subtle: #999;
+      --border: #2a2a32;
+      --primary-soft: #7D56F428;
+      --secondary-soft: #04B57520;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 24px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+    font-size: 15px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 80px; }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header.hero {
+    background: linear-gradient(135deg, #7D56F4 0%, #5B3FCD 100%);
+    color: white;
+    padding: 36px 24px 28px;
+    margin-bottom: 24px;
+  }
+  header.hero .wrap { padding: 0 24px; max-width: 980px; }
+  .hero-row {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .robot {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.15;
+    white-space: pre;
+    color: white;
+    opacity: 0.9;
+    text-shadow: 0 0 12px rgba(255,255,255,.2);
+  }
+  .robot .eye { color: #ffd43b; }
+  .robot .spark { color: #ffd43b; }
+  .hero-text h1 {
+    margin: 0 0 4px;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  .hero-text .sub {
+    opacity: 0.85;
+    font-size: 14px;
+    margin: 0;
+  }
+  .hero-text .meta {
+    opacity: 0.7;
+    font-size: 13px;
+    margin-top: 6px;
+    font-family: var(--mono);
+  }
+
+  /* ── Progress bar ───────────────────────────────────── */
+  .progress-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+    margin-bottom: 28px;
+  }
+  .progress-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .progress-head h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .progress-count {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--subtle);
+  }
+  .progress-count strong { color: var(--secondary); }
+  .bar-track {
+    height: 8px;
+    background: var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+  }
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    width: 0%;
+    border-radius: 999px;
+    transition: width .35s cubic-bezier(.2,.8,.2,1);
+  }
+  .by-category {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .cat-stat {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .cat-stat .lbl {
+    color: var(--subtle);
+    display: block;
+    margin-bottom: 2px;
+  }
+  .cat-stat .val {
+    font-family: var(--mono);
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ── Section nav ────────────────────────────────────── */
+  nav.toc {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 28px;
+  }
+  nav.toc a {
+    text-decoration: none;
+    font-size: 13px;
+    color: var(--ink-soft);
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    transition: all .15s;
+  }
+  nav.toc a:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-soft);
+  }
+
+  /* ── Sections ───────────────────────────────────────── */
+  section {
+    margin-bottom: 36px;
+    scroll-margin-top: 16px;
+  }
+  section > h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section > .sec-desc {
+    color: var(--subtle);
+    font-size: 14px;
+    margin: 0 0 16px;
+  }
+  .sec-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    font-size: 14px;
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+  section.strong .sec-icon { background: var(--secondary-soft); color: var(--secondary); }
+  section.delight .sec-icon { background: #ffd43b30; color: #b78a00; }
+
+  /* ── Items ──────────────────────────────────────────── */
+  .item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    box-shadow: var(--shadow);
+    transition: opacity .2s, transform .15s;
+  }
+  .item.done {
+    opacity: 0.55;
+  }
+  .item.done .item-title {
+    text-decoration: line-through;
+    text-decoration-color: var(--subtle);
+  }
+  .item-head {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .item-check {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+  .item-check input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--secondary);
+    cursor: pointer;
+  }
+  .item-body { flex: 1; min-width: 0; }
+  .item-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--ink);
+    margin: 0;
+    cursor: pointer;
+    user-select: none;
+  }
+  .item-meta {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    font-family: var(--sans);
+  }
+  .pill.sev-blocker { background: #ff333322; color: #d12020; }
+  .pill.sev-high { background: #ff8c0022; color: #c46400; }
+  .pill.sev-medium { background: var(--primary-soft); color: var(--primary); }
+  .pill.sev-low { background: var(--border); color: var(--subtle); }
+  .pill.sev-delight { background: #ffd43b30; color: #b78a00; }
+  .pill.cat { background: transparent; border: 1px solid var(--border); color: var(--subtle); }
+  .pill.new { background: var(--secondary-soft); color: var(--secondary); border: 1px solid var(--secondary); }
+  .item-detail {
+    margin-top: 10px;
+    color: var(--ink-soft);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .item-detail code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .item-detail code { color: #b598ff; }
+  }
+  .item-detail strong { color: var(--ink); }
+  .item-detail p { margin: 0 0 8px; }
+  .item-detail p:last-child { margin-bottom: 0; }
+  .item-detail ul { margin: 6px 0; padding-left: 20px; }
+  .item-detail li { margin-bottom: 4px; }
+
+  /* ── Footer ─────────────────────────────────────────── */
+  footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--subtle);
+    font-size: 13px;
+    text-align: center;
+  }
+  footer code { font-family: var(--mono); }
+
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    font-family: var(--sans);
+    font-size: 13px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink-soft);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn:hover { border-color: var(--primary); color: var(--primary); }
+
+  @media print {
+    header.hero { background: white; color: var(--ink); border-bottom: 2px solid var(--primary); }
+    .robot { color: var(--primary); text-shadow: none; }
+    .hero-text .sub, .hero-text .meta { color: var(--subtle); opacity: 1; }
+    nav.toc, .toolbar { display: none; }
+    .item { break-inside: avoid; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-row">
+      <pre class="robot" aria-hidden="true">     !!        !!
+       /----\
+      <span class="eye">|^  ^|</span>
+       \____/</pre>
+      <div class="hero-text">
+        <h1>huh — Pre‑Release Review</h1>
+        <p class="sub">Usability audit, doc/parity check, and polish suggestions for the public release.</p>
+        <p class="meta">reviewed 2026‑05‑25 · revised 2026‑05‑28 · all tests pass · go vet clean</p>
+        <p class="sub" style="margin-top:8px; font-size:13px;">Latest revision: 9 onboarding items, 13 functionality items, persistent mascot, and 7 follow‑up UX fixes all shipped — pre‑marked done. Delight backlog remains; see Delight section.</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ── Progress ──────────────────────────────────── -->
+  <div class="progress-card">
+    <div class="progress-head">
+      <h2>Progress</h2>
+      <div class="progress-count"><strong id="done-count">0</strong> / <span id="total-count">0</span> complete</div>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="bar-fill"></div></div>
+    <div class="by-category" id="by-category"></div>
+    <div class="toolbar">
+      <button class="btn" onclick="resetAll()">Reset progress</button>
+      <button class="btn" onclick="window.print()">Print / Save PDF</button>
+      <button class="btn" onclick="toggleAll(true)">Mark all done</button>
+      <button class="btn" onclick="toggleAll(false)">Mark all open</button>
+    </div>
+  </div>
+
+  <nav class="toc">
+    <a href="#strong">What's strong</a>
+    <a href="#onboarding">Onboarding &amp; docs</a>
+    <a href="#functionality">Functionality &amp; UX</a>
+    <a href="#delight">Delight &amp; polish</a>
+  </nav>
+
+  <!-- ── Strong ────────────────────────────────────── -->
+  <section id="strong" class="strong">
+    <h2><span class="sec-icon">✓</span> What's already strong</h2>
+    <p class="sec-desc">Don't change these — they're the parts that already work for a first-time user.</p>
+    <div data-items="strong"></div>
+  </section>
+
+  <!-- ── Onboarding ────────────────────────────────── -->
+  <section id="onboarding">
+    <h2><span class="sec-icon">⚑</span> Onboarding &amp; docs (release blockers)</h2>
+    <p class="sec-desc">Fix these before flipping the repo to public — they affect install, discovery, and first impressions.</p>
+    <div data-items="onboarding"></div>
+  </section>
+
+  <!-- ── Functionality ─────────────────────────────── -->
+  <section id="functionality">
+    <h2><span class="sec-icon">⚙</span> Functionality &amp; UX</h2>
+    <p class="sec-desc">Bugs, sharp edges, and confusing interactions found while driving the TUI end-to-end.</p>
+    <div data-items="functionality"></div>
+  </section>
+
+  <!-- ── Delight ───────────────────────────────────── -->
+  <section id="delight" class="delight">
+    <h2><span class="sec-icon">✨</span> Delight &amp; polish</h2>
+    <p class="sec-desc">Optional additions in the spirit of the existing robot mascot — small effort, outsized vibes.</p>
+    <div data-items="delight"></div>
+  </section>
+
+  <footer>
+    Progress is saved locally in your browser (<code>localStorage["huh-review-progress"]</code>). Sharing this file with someone else gives them a fresh checklist.
+  </footer>
+</div>
+
+<script>
+const ITEMS = [
+  // ─── STRONG ──────────────────────────────────────
+  {
+    id: "s1", section: "strong", cat: "Wizard",
+    title: "First‑run wizard is genuinely good",
+    detail: "Three provider paths (Ollama / OpenRouter / OpenAI‑compatible), sane defaults, Esc back‑navigation from every step, real spinner during Ollama detection. This is the strongest part of the project — don't touch it without good reason."
+  },
+  {
+    id: "s2", section: "strong", cat: "TUI",
+    title: "TUI feel is delightful",
+    detail: "Animated 4‑frame robot during loading, success robot with <code>^^</code> eyes and <code>!!</code> sparkles, boxed code blocks with active/inactive borders, Tab cycling between multiple code blocks. Multi‑block responses render beautifully."
+  },
+  {
+    id: "s3", section: "strong", cat: "Safety",
+    title: "Safety‑first stance",
+    detail: "Commands are never executed; copy‑only. This is the right default for an AI shell helper and worth keeping in the README's first paragraph."
+  },
+  {
+    id: "s4", section: "strong", cat: "Context",
+    title: "Context auto‑injection",
+    detail: "OS / distro / shell are detected and added to the system prompt automatically. The <code>context</code> map in YAML lets users add custom hints (e.g. <code>preference: \"prefer ripgrep over grep\"</code>) — neat and underadvertised."
+  },
+  {
+    id: "s5", section: "strong", cat: "Footer",
+    title: "Token counter in the footer",
+    detail: "Thoughtful detail for cloud users. Builds trust by surfacing cost in real time."
+  },
+
+  // ─── ONBOARDING / DOCS ──────────────────────────
+  {
+    id: "o1", section: "onboarding", cat: "Install", sev: "blocker", defaultDone: true,
+    title: "go.mod module path is wrong for public install",
+    detail: "<p><strong>Done</strong> — <code>go.mod</code> is now <code>module github.com/WashRinseRepeat/huh</code> and all 8 internal imports were updated. <code>go install github.com/WashRinseRepeat/huh/cmd/huh@latest</code> is now the canonical install path.</p>"
+  },
+  {
+    id: "o2", section: "onboarding", cat: "README", sev: "blocker", defaultDone: true,
+    title: "README banner is a placeholder image",
+    detail: "<p><strong>Done</strong> — replaced the dead <code>via.placeholder.com</code> link with an ASCII preview of the suggestion view (boxed command + action bar + token footer). A note in the README flags that a screen recording is still on the roadmap; that's the next visual upgrade.</p>"
+  },
+  {
+    id: "o3", section: "onboarding", cat: "README", sev: "high", defaultDone: true,
+    title: "Interactive Mode docs are stale & incomplete",
+    detail: "<p><strong>Done</strong> — rewrote the Usage section. The keybindings now live in a table that includes Refine (<code>r</code>), Tab/Shift+Tab cycling, ←/→ action navigation, ↑/↓ scrolling, and the PgUp/PgDown/Ctrl+U/Ctrl+D half-page scroll. Documented the file‑attach UI and the history menu. Added the new <code>huh setup</code> subcommand and <code>--version</code> flag.</p>"
+  },
+  {
+    id: "o4", section: "onboarding", cat: "CLI", sev: "high", defaultDone: true,
+    title: "No --version flag",
+    detail: "<p><strong>Done</strong> — wired cobra's <code>Version</code> field to a package‑level <code>version</code> var in <code>cmd/huh/root.go</code>, set via <code>-ldflags \"-X main.version=...\"</code>. The Makefile derives <code>VERSION</code> from <code>git describe --tags --always --dirty</code> by default (falls back to <code>dev</code>). Verified: <code>make build VERSION=v0.1.0-test ; ./huh --version</code> → <code>huh version v0.1.0-test</code>.</p>"
+  },
+  {
+    id: "o5", section: "onboarding", cat: "CLI", sev: "high", defaultDone: true,
+    title: "No way to re‑run the wizard",
+    detail: "<p><strong>Done</strong> — added <code>huh setup</code> as a cobra subcommand. It re-runs the wizard regardless of whether a config already exists, and reloads config after writing. README is updated.</p>"
+  },
+  {
+    id: "o6", section: "onboarding", cat: "CI", sev: "high", defaultDone: true,
+    title: "No CI on PR/push — only on tag",
+    detail: "<p><strong>Done</strong> — added <code>.github/workflows/ci.yaml</code> that runs <code>go vet</code>, <code>go test -race</code>, and <code>go build</code> on push to main and on every PR. Uses Go's module cache for speed.</p>"
+  },
+  {
+    id: "o7", section: "onboarding", cat: "Repo hygiene", sev: "medium", defaultDone: true,
+    title: "Add CONTRIBUTING / issue templates / SECURITY",
+    detail: "<p><strong>Done</strong> — added:</p><ul><li><code>CONTRIBUTING.md</code> — quick-start, project layout, PR guidelines.</li><li><code>SECURITY.md</code> — private security advisory channel, scope statement.</li><li><code>.github/ISSUE_TEMPLATE/bug_report.md</code> + <code>feature_request.md</code> + <code>config.yml</code> (the latter disables blank issues and links to security advisories).</li></ul>"
+  },
+  {
+    id: "o8", section: "onboarding", cat: "Install", sev: "medium", defaultDone: true,
+    title: "make install requires sudo to /usr/local/bin",
+    detail: "<p><strong>Done</strong> — Makefile now uses <code>PREFIX</code> (default <code>/usr/local</code>) and no longer hardcodes <code>sudo</code>. Documented both flows: <code>sudo make install</code> for the system path, <code>PREFIX=$HOME/.local make install</code> for sudo-free user install. Added <code>go install ...@latest</code> as the recommended path. Bonus: added <code>make uninstall</code>, <code>make test</code>, and <code>make vet</code> targets.</p>"
+  },
+  {
+    id: "o9", section: "onboarding", cat: "Repo hygiene", sev: "medium", defaultDone: true,
+    title: "Stray files committed to the repo",
+    detail: "<p><strong>Done</strong> — removed <code>test.log</code> (was tracked) and the local <code>huh</code> binary + empty <code>internal/sanitizer/</code> directory (untracked).</p><p><strong>Not deleted:</strong> <code>.Jules/palette.md</code>. It contains the user-authored \"delight over standardization\" design note that informed this whole review. Moving or untracking it is a judgment call worth keeping with you, not me.</p>"
+  },
+
+  // ─── FUNCTIONALITY ──────────────────────────────
+  {
+    id: "f1", section: "functionality", cat: "Errors", sev: "high", defaultDone: true,
+    title: "Bad config crashes with no recovery hint",
+    detail: "<p><strong>Done</strong> — provider error now prints as <code>huh: provider 'X' not found in configuration</code> followed by the config file path and <code>re-run the setup wizard with: huh setup</code>. Tested with an unknown provider name → user sees three useful lines instead of one cryptic one.</p>"
+  },
+  {
+    id: "f2", section: "functionality", cat: "Errors", sev: "high", defaultDone: true,
+    title: "TTY error when piping with no question",
+    detail: "<p><strong>Done</strong> — detected at the top of <code>rootCmd.Run</code>: if stdin is non-TTY and no question was given, exit with <code>huh: when piping input, please provide a question</code> + an example. The piped-WITH-question path is untouched (still reads stdin as context). Verified both: <code>echo x | huh</code> → clean exit 1; <code>echo x | huh \"q\"</code> → proceeds normally.</p>"
+  },
+  {
+    id: "f3", section: "functionality", cat: "TUI", sev: "high", defaultDone: true,
+    title: "Suggestion view footer hint is contradictory",
+    detail: "<p><strong>Done</strong> — footer now reads <code>(←/→ action · ↑/↓ scroll · Enter confirm · q quit)</code>. Verified in driven TUI.</p>"
+  },
+  {
+    id: "f4", section: "functionality", cat: "TUI", sev: "high", defaultDone: true,
+    title: "Action-bar shortcuts aren't visibly marked",
+    detail: "<p><strong>Done</strong> — actions render as <code>[C]opy [E]xplain [R]efine [Q]uit</code> (brackets are visible across every theme). Renamed <code>Cancel → Quit</code> in the Options array and updated <code>handleSelection</code>. Verified visually.</p>"
+  },
+  {
+    id: "f5", section: "functionality", cat: "Flow", sev: "medium", defaultDone: true,
+    title: "History menu blocks the fast path",
+    detail: "<p><strong>Done</strong> — part (a) was already correct (menu is skipped when a question arg is given). Part (b): added type-to-start. Any printable key on the menu now jumps into <code>StateInput</code> with that text pre-filled (handles both single keystrokes and paste-like bulk input). Vim-style <code>j/k/q</code> bindings still work and take precedence. Menu hint updated to <code>(Enter select · type to start a new chat · Esc quit)</code>.</p>"
+  },
+  {
+    id: "f6", section: "functionality", cat: "History", sev: "medium", defaultDone: true,
+    title: "History list shows no timestamps",
+    detail: "<p><strong>Done</strong> — added a small <code>relativeTime</code> helper (<code>just now</code> → <code>5 min ago</code> → <code>2 hours ago</code> → <code>yesterday</code> → <code>3 days ago</code> → <code>Jan 2</code> for older). Rendered in subtle gray to the right of each question.</p>"
+  },
+  {
+    id: "f7", section: "functionality", cat: "TUI", sev: "medium", defaultDone: true,
+    title: "Refine input is blank with no anchor",
+    detail: "<p><strong>Done</strong> — the refine view now shows <code>Editing:</code> followed by the active command rendered in the same rounded box as the suggestion view, then the input field. Falls back to the full suggestion text if for some reason no runnable command is parsed.</p>"
+  },
+  {
+    id: "f8", section: "functionality", cat: "Security", sev: "medium", defaultDone: true,
+    title: "API keys are stored plaintext in config.yaml",
+    detail: "<p><strong>Done</strong> — added <code>api_key_env: VAR_NAME</code> support for both OpenAI and OpenRouter providers (read via a new <code>resolveAPIKey</code> helper in <code>internal/llm/factory.go</code>). <code>api_key_env</code> wins when the var is non-empty, with <code>api_key</code> as the fallback. Documented in README and <code>config.example.yaml</code>. Three new unit tests cover the env/fallback/missing combinations.</p>"
+  },
+  {
+    id: "f9", section: "functionality", cat: "Accessibility", sev: "medium", defaultDone: true,
+    title: "No NO_COLOR / --no-color support",
+    detail: "<p><strong>Done</strong> — added <code>--no-color</code> as a persistent flag and a <code>PersistentPreRun</code> that calls <code>lipgloss.SetColorProfile(termenv.Ascii)</code> when either the flag is set or the <code>NO_COLOR</code> env var is present (per no-color.org: presence is enough, value is ignored). Verified empirically: wizard renders 14 SGR color sequences by default, 0 with either opt-out path.</p>"
+  },
+  {
+    id: "f10", section: "functionality", cat: "TUI", sev: "low", defaultDone: true,
+    title: "q behavior inconsistent across states",
+    detail: "<p><strong>Done</strong> — every state's footer hint now spells out the relevant keys using a consistent format (e.g. <code>(Tab attach · Enter ask · Esc quit)</code>, <code>(Esc back · q quit)</code>, <code>(↑/↓ scroll · Esc back)</code>). No behavior change — just removes the surprise.</p>"
+  },
+  {
+    id: "f11", section: "functionality", cat: "Code smell", sev: "low", defaultDone: true,
+    title: "sudo read uses sh -c with quoted format",
+    detail: "<p><strong>Done</strong> — <code>sudoRead</code> now runs <code>exec.Command(\"sudo\", \"cat\", path)</code> directly with <code>cmd.Stdout = tempFile</code>. The shell is out of the picture; no quoting concerns and no injection surface. The temp file is closed in the post-exec callback before its path is handed off.</p>"
+  },
+  {
+    id: "f12", section: "functionality", cat: "TUI", sev: "high", isNew: true, defaultDone: true,
+    title: "Default-selected command should be the first, not the last",
+    detail: "<p><strong>Done</strong> — flipped <code>m.ActiveCommandIndex</code> initialization from <code>len(m.RunnableCommands) - 1</code> to <code>0</code> in all three sites where a fresh suggestion is loaded (new answer, history-menu \"view last answer\", history-list selection). The fourth match — the Shift+Tab wrap-around in cycle navigation — correctly remains <code>len-1</code>.</p>"
+  },
+  {
+    id: "f13", section: "functionality", cat: "TUI", sev: "high", isNew: true, defaultDone: true,
+    title: "Multi-command answer disappears after Copy",
+    detail: "<p><strong>Done</strong> — solved by leaning into terminal scrollback instead of keeping the app alive. <code>huh</code> uses the regular screen (no alt-buffer) and doesn't capture mouse, so whatever frame is on screen when the program exits stays in the terminal and is mouse-selectable.</p><p>The post-copy frame is now the full suggestion view with a green inline <code>✓ copied</code> next to the copied command's box (via <code>lipgloss.JoinHorizontal</code>). The user pastes command 1 via clipboard, runs it, then mouse-drag-selects commands 2/3 from the still-visible huh output.</p><p>Implementation: dropped <code>StateCopied</code> entirely; added <code>Model.JustCopiedIndex</code> (reset to <code>-1</code> on every new suggestion / history load); <code>performCopy</code> sets the marker and stays in <code>StateSuggestion</code>; the quit timer is 300 ms (was 800); a guard in the <code>CopiedTimeoutMsg</code> handler prevents accidental quit if the user navigates away in the 300 ms window. Verified on a 3-command btrfs query — ✓ tracks Tab selection correctly.</p>"
+  },
+  {
+    id: "f14", section: "functionality", cat: "Mascot", sev: "medium", isNew: true, defaultDone: true,
+    title: "Mascot left-aligned + slower searching animation",
+    detail: "<p><strong>Done</strong> — first round had the mascot top-right, which was invisible on wide terminals. Flipped <code>renderHeader</code> to put the mascot on the LEFT and vertically-center the title block against the mascot's 4-line height (so a short title sits at his eye level — feels like he's looking at it).</p><p>Thinking animation reframed: was a 4-frame blink cycle running every 200 ms (jittery). Now holds each pose for 4 ticks (~800 ms): <code>forward → left → forward → right</code>, antenna wiggles only when his head is turned. Reads as deliberate searching, not nervous twitching. No interruption blinks during thinking — those suggested sleepiness rather than focus.</p>"
+  },
+  {
+    id: "f15", section: "functionality", cat: "TUI", sev: "high", isNew: true, defaultDone: true,
+    title: "Explain output looked like one giant comment block",
+    detail: "<p><strong>Done</strong> — the explanation view wrapped the whole LLM response in <code>DescriptionStyle</code> (italic + subtle gray), so any markdown the model returned (headers, tables, code blocks, bullets) was flattened to one wall of grey italic that read like a code comment.</p><p>Replaced with a proper markdown renderer: added <code>github.com/charmbracelet/glamour</code> dep and a <code>renderMarkdown(src, width)</code> helper in <code>model.go</code>. Headers, code blocks, tables, lists and emphasis all render correctly now. <code>--no-color</code> and <code>NO_COLOR</code> propagate via <code>os.Setenv(\"NO_COLOR\", \"1\")</code> in <code>applyColorPreference</code> so glamour also falls back to plain ASCII.</p>"
+  },
+  {
+    id: "f16", section: "functionality", cat: "TUI", sev: "high", isNew: true, defaultDone: true,
+    title: "Esc from Explain didn't actually return to the answer",
+    detail: "<p><strong>Done</strong> — the state transition was happening, but <code>updateViewportContent</code> wasn't being called, so the viewport kept rendering the explanation text under the new \"Suggestion:\" title. Now <code>updateViewportContent()</code> is invoked and <code>viewport.GotoTop()</code> resets scroll so the user lands on the actual answer, not mid-page.</p><p>Hint copy also updated from <code>(↑/↓ scroll · Esc back)</code> to <code>(↑/↓ scroll · Esc back to answer)</code> so it's clear what \"back\" means.</p>"
+  },
+  {
+    id: "f17", section: "functionality", cat: "TUI", sev: "high", isNew: true, defaultDone: true,
+    title: "↑/↓ now picks commands instead of scrolling",
+    detail: "<p><strong>Done</strong> — users expected arrow-up/down to navigate the list of commands in a multi-command answer (a normal list-nav convention) but they scrolled instead, with Tab being the only way to change selection. Now:</p><ul><li><strong>↑/↓ (or k/j)</strong>: when there are 2+ commands, picks the previous/next command and auto-scrolls it into view via <code>ensureVisible</code>. When there's only 0–1 commands, falls back to scrolling so single-answer + long preamble still scrolls naturally.</li><li><strong>Tab / Shift+Tab</strong>: same as ↑/↓ — kept as an alias for muscle memory.</li><li><strong>PgUp / PgDn / Ctrl+U / Ctrl+D</strong>: explicit half-page scrolling (works regardless of command count).</li></ul><p>Footer hint also became dynamic: <code>(↑/↓ or Tab pick command · ←/→ action · Enter confirm · PgUp/Dn scroll · q quit)</code> for multi-command answers, <code>(↑/↓ scroll · ←/→ action · Enter confirm · q quit)</code> for single. README keybinding table updated to match.</p>"
+  },
+  {
+    id: "f18", section: "functionality", cat: "Refine", sev: "high", isNew: true, defaultDone: true,
+    title: "Refine scope adapts to the answer shape",
+    detail: "<p><strong>Done</strong> — refine previously sent only the currently-selected command to the LLM regardless of whether the answer was a single command or a multi-command sequence. For multi-command answers (e.g. \"make a btrfs snapshot and restore\"), this lost cross-cutting context like \"add sudo to all of these\".</p><p>New behavior (option B from the brainstorm):</p><ul><li><strong>Single-command answer</strong>: refine sends just the bare command (existing fast path — unchanged).</li><li><strong>Multi-command answer</strong>: refine sends the whole <code>m.Suggestion</code> text (prose + all code blocks) so the LLM can update the full sequence in one shot.</li></ul><p>Prompt template generalized from <code>Original Command: '<cmd>'</code> to <code>Original Answer:\\n<...></code>, plus the instruction \"If the original had multiple commands, return the updated set in the same order.\"</p><p>The refine view also adapts: single-command shows <code>Editing: [boxed cmd]</code>; multi-command shows a plain-text scope label <code>Refining all N commands of your answer to: \"<question>\"</code> with the question truncated at 60 chars (no re-rendering of all the boxed commands — the user just saw them in the suggestion view).</p>"
+  },
+  {
+    id: "f19", section: "functionality", cat: "Refine", sev: "medium", isNew: true, defaultDone: true,
+    title: "Refine prompt's `Original Request` was stale on interactive launches",
+    detail: "<p><strong>Done</strong> — the <code>refineFunc</code> closure in <code>cmd/huh/root.go</code> captured the CLI-arg <code>question</code>, which is empty when launched interactively (<code>huh</code> then type the question). So every interactive refine sent <code>Original Request: ''</code> to the LLM. Also broke on refine-of-a-refine — <code>m.Question</code> gets overwritten with the refinement text each cycle.</p><p>Fix: added <code>Model.OriginalQuestion</code> — set once and preserved across refines. Captured in <code>NewModel</code> (CLI-arg path), on first input submit (interactive path), and on history loads. <code>RefineFunc</code> signature changed to take it as the first argument; <code>root.go</code> uses the parameter instead of the closure.</p><p>Side effect: refine-of-a-refine no longer drifts. The LLM always sees the user's original anchor question, not the previous refinement text.</p>"
+  },
+  {
+    id: "f20", section: "functionality", cat: "TUI", sev: "medium", isNew: true, defaultDone: true,
+    title: "File-prompt cancel left the file path in the question input",
+    detail: "<p><strong>Done</strong> — flow: user types <code>how do I list</code>, Tab+Enter to open file prompt, types <code>/etc/foo</code>, then Esc. Old behavior wiped the original question on entry, did nothing on Esc, so the user came back to find <code>/etc/foo</code> sitting in the question input.</p><p>Added <code>Model.SavedInput</code>. Wired in five sites: both entries to <code>StateFilePrompt</code> (from <code>StateInput</code> and <code>StateRefining</code>) save the current input value; both exits (Esc and successful attach) and the post-sudo-read path all restore it. The question text now survives the round trip whether you finish the attach or cancel out.</p>"
+  },
+
+  // ─── DELIGHT ───────────────────────────────────
+  {
+    id: "d1", section: "delight", cat: "Identity", sev: "delight",
+    title: "Lean into the name",
+    detail: "Tagline candidates: <code>huh? — ask your terminal anything</code> · <code>\"huh?\" → \"ah.\"</code> Use on the welcome screen and as a subtitle in the README. The two‑word arc is the brand in one breath."
+  },
+  {
+    id: "d2", section: "delight", cat: "Mascot", sev: "delight", defaultDone: true,
+    title: "More robot states (and: persistent mascot)",
+    detail: "<p><strong>Done — and expanded.</strong> The mascot now lives in the top-right corner of <em>every</em> view (not just loading/success) and reacts to what's happening:</p><ul><li><strong>Idle</strong> (history menus) — slow blink every ~3s, purple eyes.</li><li><strong>Attentive</strong> (input / refining / file prompt) — open eyes with occasional blink.</li><li><strong>Thinking</strong> (loading) — 4-frame look-around + wiggling antenna (the original loading animation, now persistent).</li><li><strong>Excited</strong> (success anim + the 300ms just-copied window) — green <code>^ ^</code> eyes with bobbing sparkles <code>!!</code>.</li><li><strong>Proud</strong> (suggestion / explained) — green squinty <code>^ ^</code>, subtle blink.</li><li><strong>Confused</strong> (error / permission denied) — red <code>x x</code> alternating with <code>&gt; &lt;</code> wobble.</li></ul><p>Implementation: new <code>internal/ui/mascot.go</code> module with a <code>MascotState</code> enum and <code>RenderMascot(state, frame)</code>. A <code>renderHeader</code> helper on the model JoinHorizontals the title block with the mascot block; falls back to plain title when the terminal is &lt;60 cols wide. The previous big centered loading/success robots were removed — the corner mascot carries those signals now, and the title row gets back its vertical space. Animation tick now runs continuously (200ms) instead of just during loading.</p>"
+  },
+  {
+    id: "d3", section: "delight", cat: "Errors", sev: "delight",
+    title: "Friendlier error tone",
+    detail: "Map common errors to plain English. Today: <code>dial tcp [::1]:9999: connect: connection refused</code>. Better: <code>Hmm, I couldn't reach Ollama at http://localhost:9999. Is it running? Try: ollama serve</code>. Map: connection refused, 401, 403, 429, timeout, model‑not‑found."
+  },
+  {
+    id: "d4", section: "delight", cat: "Microcopy", sev: "delight",
+    title: "First‑successful‑run easter egg",
+    detail: "Tiny toast after the first successful copy: <code>🎉 nice — first command in the bag</code>. Store a flag in the config file. One‑time only."
+  },
+  {
+    id: "d5", section: "delight", cat: "Footer", sev: "delight",
+    title: "Cost estimate next to tokens",
+    detail: "<code>tokens: 141 in / 133 out / 274 total (~$0.0001)</code>. Tiny lookup table for known OpenRouter/OpenAI model IDs. Show nothing if unknown — never lie about cost."
+  },
+  {
+    id: "d6", section: "delight", cat: "Performance", sev: "delight",
+    title: "Stream responses",
+    detail: "Right now the robot dances for the whole roundtrip. Both Ollama and OpenAI/OpenRouter support SSE streaming — pipe tokens into the suggestion view as they arrive. The wait feels instant and the robot can subtly react (eyes track the cursor)."
+  },
+  {
+    id: "d7", section: "delight", cat: "History", sev: "delight",
+    title: "Context‑aware welcome‑back",
+    detail: "Replace <code>Welcome back to huh</code> with <code>Welcome back! Your last question: \"how do I find files larger than 100MB\" — 2 hours ago.</code> then the menu. Recognition over recall."
+  },
+  {
+    id: "d8", section: "delight", cat: "TUI", sev: "delight",
+    title: "Action bar visual polish",
+    detail: "Today the four actions blur together. Add a thin separator (<code>·</code>) between items and a soft background on the selected one. Same content, much clearer hierarchy."
+  },
+  {
+    id: "d9", section: "delight", cat: "Wizard", sev: "delight",
+    title: "Wizard \"Done\" screen recap + first‑query nudge",
+    detail: "On the Done step, list the saved settings (provider, model, host or masked key) and a try‑me tip: <code>Try: huh how do I list files by size</code>. Reduces the \"now what?\" gap by one second."
+  },
+  {
+    id: "d10", section: "delight", cat: "Micro", sev: "delight",
+    title: "Micro‑interactions",
+    detail: "<p>Partially landed via [[d2]]: <strong>antenna wiggle</strong> in sync with the spinner, and a <strong>wink + sparkle flash</strong> when the user copies (the mascot briefly switches from Proud to Excited for the 300ms post-copy window).</p><p>Still open: cursor‑style blink on the selected action‑bar item (subtle highlight pulse).</p>"
+  },
+];
+
+const STORAGE_KEY = "huh-review-progress";
+const state = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+
+// Apply defaultDone for items the user has never seen.
+// If state[id] is undefined, fall through to the item's defaultDone (treated as false otherwise).
+ITEMS.forEach(item => {
+  if (state[item.id] === undefined && item.defaultDone === true) {
+    state[item.id] = true;
+  }
+});
+
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  render();
+}
+
+function render() {
+  // Group items by section
+  const bySection = {};
+  ITEMS.forEach(i => (bySection[i.section] ||= []).push(i));
+
+  for (const [section, items] of Object.entries(bySection)) {
+    const host = document.querySelector(`[data-items="${section}"]`);
+    host.innerHTML = "";
+    items.forEach(item => host.appendChild(renderItem(item)));
+  }
+
+  // Progress
+  const total = ITEMS.length;
+  const done = ITEMS.filter(i => state[i.id]).length;
+  document.getElementById("total-count").textContent = total;
+  document.getElementById("done-count").textContent = done;
+  document.getElementById("bar-fill").style.width = (done / total * 100) + "%";
+
+  // By-section breakdown
+  const cats = document.getElementById("by-category");
+  cats.innerHTML = "";
+  const labels = {
+    strong: "Strengths (reference)",
+    onboarding: "Onboarding & docs",
+    functionality: "Functionality & UX",
+    delight: "Delight & polish",
+  };
+  for (const sec of Object.keys(labels)) {
+    const items = bySection[sec] || [];
+    const d = items.filter(i => state[i.id]).length;
+    const div = document.createElement("div");
+    div.className = "cat-stat";
+    div.innerHTML = `<span class="lbl">${labels[sec]}</span><span class="val">${d} / ${items.length}</span>`;
+    cats.appendChild(div);
+  }
+}
+
+function renderItem(item) {
+  const wrap = document.createElement("div");
+  wrap.className = "item" + (state[item.id] ? " done" : "");
+  const sev = item.sev || (item.section === "strong" ? "low" : "medium");
+  wrap.innerHTML = `
+    <div class="item-head">
+      <div class="item-check">
+        <input type="checkbox" id="cb-${item.id}" ${state[item.id] ? "checked" : ""}>
+      </div>
+      <div class="item-body">
+        <label for="cb-${item.id}" class="item-title">${item.title}</label>
+        <div class="item-meta">
+          ${item.section !== "strong" ? `<span class="pill sev-${sev}">${sev}</span>` : ""}
+          <span class="pill cat">${item.cat}</span>
+          ${item.isNew ? `<span class="pill new">new</span>` : ""}
+        </div>
+        <div class="item-detail">${item.detail}</div>
+      </div>
+    </div>
+  `;
+  wrap.querySelector("input").addEventListener("change", e => {
+    state[item.id] = e.target.checked;
+    save();
+  });
+  return wrap;
+}
+
+function resetAll() {
+  if (!confirm("Clear all progress?")) return;
+  for (const k of Object.keys(state)) delete state[k];
+  save();
+}
+
+function toggleAll(on) {
+  ITEMS.forEach(i => { state[i.id] = on; });
+  save();
+}
+
+render();
+</script>
+
+</body>
+</html>

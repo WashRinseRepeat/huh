@@ -2,7 +2,7 @@ package usercontext
 
 import (
 	"testing"
-	"huh/internal/config"
+	"github.com/WashRinseRepeat/huh/internal/config"
 )
 
 func TestGetContextMatchesConfig(t *testing.T) {

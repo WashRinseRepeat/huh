@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"strings"
 
-	"huh/internal/config"
+	"github.com/WashRinseRepeat/huh/internal/config"
 )
 
 type SystemContext struct {

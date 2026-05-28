@@ -1,10 +1,48 @@
 package llm
 
 import (
+	"os"
 	"testing"
 
-	"huh/internal/config"
+	"github.com/WashRinseRepeat/huh/internal/config"
 )
+
+func TestResolveAPIKey(t *testing.T) {
+	const envName = "HUH_TEST_API_KEY_RESOLVE"
+	os.Unsetenv(envName)
+	defer os.Unsetenv(envName)
+
+	t.Run("plain api_key", func(t *testing.T) {
+		got := resolveAPIKey(map[string]string{"api_key": "literal-key"})
+		if got != "literal-key" {
+			t.Errorf("got %q, want %q", got, "literal-key")
+		}
+	})
+
+	t.Run("api_key_env overrides when env set", func(t *testing.T) {
+		os.Setenv(envName, "from-env")
+		defer os.Unsetenv(envName)
+		got := resolveAPIKey(map[string]string{"api_key": "ignored", "api_key_env": envName})
+		if got != "from-env" {
+			t.Errorf("got %q, want %q", got, "from-env")
+		}
+	})
+
+	t.Run("api_key_env falls back to api_key when env unset", func(t *testing.T) {
+		os.Unsetenv(envName)
+		got := resolveAPIKey(map[string]string{"api_key": "fallback", "api_key_env": envName})
+		if got != "fallback" {
+			t.Errorf("got %q, want %q", got, "fallback")
+		}
+	})
+
+	t.Run("nothing set", func(t *testing.T) {
+		got := resolveAPIKey(map[string]string{})
+		if got != "" {
+			t.Errorf("got %q, want empty", got)
+		}
+	})
+}
 
 func TestNewProvider(t *testing.T) {
 	// Setup mock config
